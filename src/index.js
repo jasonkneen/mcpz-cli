@@ -14,19 +14,29 @@ function displayBanner() {
     // Get dirname and construct path to banner.js
     const __dirname = path.dirname(fileURLToPath(import.meta.url));
     
-    // Try different possible locations for banner.js
-    let bannerPath = path.join(__dirname, '../banner.js');
+    // Try multiple possible locations for banner.js
+    const possiblePaths = [
+      path.join(__dirname, '../banner.js'),  // During development
+      path.join(__dirname, './banner.js'),   // In production/npm package
+      path.join(__dirname, 'banner.js'),     // Alternative production path
+    ];
     
-    // If we're in the dist directory, try a different path
-    if (!fs.existsSync(bannerPath)) {
-      bannerPath = path.join(__dirname, './banner.js');
+    let bannerContent = null;
+    
+    // Try each possible path
+    for (const bannerPath of possiblePaths) {
+      try {
+        if (fs.existsSync(bannerPath)) {
+          bannerContent = fs.readFileSync(bannerPath, 'utf8');
+          break; // Found it, stop searching
+        }
+      } catch (e) {
+        // Continue to next path
+      }
     }
-
-    // Check if banner.js exists
-    if (fs.existsSync(bannerPath)) {
-      // Read the banner file
-      const bannerContent = fs.readFileSync(bannerPath, 'utf8');
-
+    
+    // If we found the banner content
+    if (bannerContent) {
       // Extract the ASCII art between /* and */
       const bannerMatch = bannerContent.match(/\/\*([\s\S]*?)\*\//m);
 

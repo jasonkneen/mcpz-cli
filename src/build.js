@@ -150,6 +150,13 @@ async function copyBanner() {
   try {
     await fs.copyFile(bannerPath, distBannerPath);
     console.info('Copied banner.js to dist');
+    
+    // Also make sure it's at the root level for the code directly
+    const distRootBannerPath = path.join(distDir, 'banner.js');
+    if (distRootBannerPath !== distBannerPath) {
+      await fs.copyFile(bannerPath, distRootBannerPath);
+      console.info('Also copied banner.js to dist root');
+    }
   } catch (error) {
     console.info('Error copying banner.js:', error);
   }

@@ -1,6 +1,6 @@
 {
   "name": "@mcpz/cli",
-  "version": "1.0.28",
+  "version": "1.0.29",
   "description": "Command line interface for Model Context Protocol servers and tools",
   "type": "module",
   "main": "dist/index.js",

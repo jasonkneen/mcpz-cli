@@ -1,10 +1,42 @@
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { createRequire } from 'module';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const execPromise = promisify(exec);
 const require = createRequire(import.meta.url);
-const packageJson = require('../../package.json');
+
+// Get the current directory of this file
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Try to find package.json in different possible locations
+let packageJson;
+try {
+  // First try to load from parent directory (during development)
+  packageJson = require('../../package.json');
+} catch (error) {
+  try {
+    // Then try from the current directory's parent (in production/npm package)
+    packageJson = require(path.join(__dirname, '../package.json'));
+  } catch (innerError) {
+    try {
+      // As a last resort, try to read it directly from the filesystem
+      const packagePath = path.join(__dirname, '../package.json');
+      const packageData = fs.readFileSync(packagePath, 'utf8');
+      packageJson = JSON.parse(packageData);
+    } catch (finalError) {
+      // Create a minimal package.json with just enough info to not break
+      packageJson = {
+        name: '@mcpz/cli',
+        version: '1.0.28'  // Hardcoded fallback
+      };
+      console.log('Warning: Could not find package.json, using fallback values');
+    }
+  }
+}
 
 /**
  * Check if a newer version of the package is available
