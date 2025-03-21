@@ -1,0 +1,47 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Build outputs
+dist/
+out/
+build/
+*.tgz
+
+# Coverage directory
+coverage/
+.nyc_output/
+
+# IDE and editor folders
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.local
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Test files
+.test/
+test-results/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+claude.md
+.goose

@@ -1,0 +1,66 @@
+{
+  "name": "@mcpz/cli",
+  "version": "1.0.23",
+  "description": "Command line interface for Model Context Protocol servers and tools",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "mcps": "dist/index.js",
+    "mcpz": "dist/index.js",
+    "mcpsx": "dist/index.js",
+    "mz": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "dist/**/*"
+  ],
+  "scripts": {
+    "build": "node src/build.js",
+    "test": "node --test",
+    "test:single": "node --test",
+    "test:watch": "node --test --watch",
+    "lint": "eslint src/",
+    "deploy": "npm run build && cd dist && npm publish --access=public",
+    "deploy-dev": "npm run build && cd dist && npm publish --tag dev --access=public",
+    "prepare": "husky install"
+  },
+  "lint-staged": {
+    "src/**/*.js": [
+      "eslint --fix"
+    ]
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jasonkneen/mcpz-cli.git"
+  },
+  "keywords": [
+    "mcp",
+    "mcpsx",
+    "mcpz",
+    "cli",
+    "model-context-protocol"
+  ],
+  "author": "Jason kneen",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.5.0",
+    "boxen": "^7.1.1",
+    "chalk": "^5.4.1",
+    "commander": "^11.0.0",
+    "ink": "^4.4.1",
+    "ink-link": "^3.0.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^5.0.1",
+    "log-update": "^6.1.0",
+    "react": "^18.3.1",
+    "term-size": "^3.0.2",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "husky": "^8.0.0",
+    "javascript-obfuscator": "^4.1.1",
+    "lint-staged": "^15.5.0",
+    "mocha": "^10.3.0"
+  }
+}

@@ -1,0 +1,22 @@
+# Development files
+.git
+.github
+.vscode
+node_modules
+*.log
+*.tgz
+
+# Test files
+test
+tests
+__tests__
+coverage
+
+# Source maps
+*.map
+
+# Configuration files
+.eslintrc*
+.prettierrc*
+.editorconfig
+tsconfig.json
