@@ -1,5 +1,6 @@
 
-![mcpzit](https://github.com/user-attachments/assets/dfeed313-6960-4fc0-bd8f-7fa2050df700)
+![mcpzit](https://github.com/user-attachments/assets/984d5570-b3c2-4648-b4a2-abd4f4d8be14)
+
 
 # mcpz cli
 
