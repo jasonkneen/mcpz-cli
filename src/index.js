@@ -55,7 +55,6 @@ import { tools } from './commands/tools.js';
 import { help } from './commands/help.js';
 import { config } from './commands/config.js';
 import { registerUpdateCommand } from './commands/update.js';
-import { interactive } from './commands/interactive.js';
 // Get package version
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const packagePath = path.join(__dirname, '../package.json');
@@ -210,7 +209,7 @@ checkForUpdates().then(({ hasUpdate, currentVersion, latestVersion }) => {
   // Silently ignore errors in update check
 });
 
-// Register interactive command - must be done before parse!
+// Interactive mode command
 program
   .command('interactive')
   .alias('i')
@@ -228,7 +227,7 @@ program
 // Parse arguments
 program.parse(process.argv);
 
-// If no arguments, show help (we'll change this to interactive mode once it's stable)
+// Always show help if no arguments (we've disabled interactive mode as default)
 if (process.argv.length === 2) {
   program.help();
 }

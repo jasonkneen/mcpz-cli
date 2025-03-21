@@ -734,7 +734,7 @@ class McpServer {
   #mcpClients = new Map();
   #serverFilters = null;
   #toolFilters = null;
-
+  #groupFilters = null;
   constructor() {
     // Create instances of managers
     this.#toolRegistry = new ToolRegistry();
@@ -911,43 +911,83 @@ class McpServer {
           await client.connect(transport);
           console.info(`Successfully connected to MCP client: ${server.name}`);
           
-          // Get the process ID
-          let pid;
+          // Initialize with no PID, we'll update it later if it becomes available
+          const initialPid = null;
+          
+          // Test the connection first to get MCP details
+          console.info(`Getting MCP details from ${server.name}...`);
+          let mcpDetails = null;
+          
           try {
-            pid = transport.process?.pid;
+            // Get tools to determine MCP capabilities
+            const toolsResponse = await client.listTools();
             
-            if (!pid) {
-              console.info(`Error: Could not get PID for ${server.name}`);
-              console.debug(`Transport details: ${JSON.stringify(transport)}`);
-              console.debug(`Transport process exists: ${transport.process ? 'yes' : 'no'}`);
+            if (!toolsResponse.error) {
+              // Create an MCP details object with the information we have
+              mcpDetails = {
+                toolCount: toolsResponse.tools ? toolsResponse.tools.length : 0,
+                toolTypes: toolsResponse.tools ? [...new Set(toolsResponse.tools.map(t => t.type || 'unknown'))] : [],
+                capabilities: toolsResponse.tools ? 
+                  toolsResponse.tools.reduce((caps, tool) => {
+                    if (tool.name) caps.toolNames.add(tool.name);
+                    return caps;
+                  }, { toolNames: new Set() }) : 
+                  { toolNames: new Set() }
+              };
               
-              // If we can't get the PID but the connection succeeded, use a fake PID for tracking
-              const fakePid = Math.floor(Math.random() * 100000) + 10000;
-              console.info(`Using fake PID ${fakePid} for ${server.name} since actual PID is not available`);
-              pid = fakePid;
+              // Convert Sets to Arrays for serialization
+              mcpDetails.capabilities.toolNames = Array.from(mcpDetails.capabilities.toolNames);
             }
-          } catch (pidError) {
-            console.error(`Error getting PID for ${server.name}: ${pidError.message}`);
-            // Use a fake PID for tracking
-            pid = Math.floor(Math.random() * 100000) + 10000;
+          } catch (detailsError) {
+            console.info(`Could not get MCP details for ${server.name}: ${detailsError.message}`);
           }
+          
+          // Include filterInfo in the server config if applicable
+          const serverConfig = {
+            ...server,
+            toolFilters: this.#toolFilters || [],
+            serverFilters: this.#serverFilters || [],
+            groupFilters: this.#groupFilters || []
+          };
           
           // Register the instance with the instance manager
           const instanceId = instanceManager.registerInstance(
-            pid,
+            initialPid,
             cmd,
             server.name,
             'cli',
-            JSON.stringify(server),
+            JSON.stringify(serverConfig),
             {
               args: allArgs,
               env: env || {},
               cwd: process.cwd()
             },
-            'stdio'
+            'stdio',
+            transport,
+            mcpDetails
           );
           
-          console.info(`Registered server instance ${instanceId} with ${pid !== transport.process?.pid ? 'fake ' : ''}PID ${pid}`);
+          console.info(`Registered server instance ${instanceId} without initial PID`);
+          
+          // Set up a listener to get the PID once it becomes available
+          const checkForPid = setInterval(() => {
+            try {
+              const currentPid = transport.process?.pid;
+              if (currentPid) {
+                instanceManager.updateInstancePid(instanceId, currentPid);
+                console.info(`Updated instance ${instanceId} with real PID ${currentPid}`);
+                clearInterval(checkForPid);
+              }
+            } catch (error) {
+              console.debug(`Error checking for PID: ${error.message}`);
+            }
+          }, 500); // Check every 500ms
+          
+          // Clean up the interval after 10 seconds if we still don't have a PID
+          setTimeout(() => {
+            clearInterval(checkForPid);
+            console.info(`Stopped checking for PID for instance ${instanceId}`);
+          }, 10000);
           
           // Test the connection by listing tools
           try {
@@ -1156,12 +1196,12 @@ class McpServer {
 
       // Parse filters
       this.#serverFilters = this.#parseFilters(options.server, options.servers);
-      const groupFilters = this.#parseFilters(options.group, options.groups);
+      this.#groupFilters = this.#parseFilters(options.group, options.groups);
       this.#toolFilters = this.#parseFilters(options.tool, options.tools);
       
       // If group filters are specified, expand them to server filters
-      if (groupFilters) {
-        console.info(`Filtering to groups: ${groupFilters.join(', ')}`);
+      if (this.#groupFilters) {
+        console.info(`Filtering to groups: ${this.#groupFilters.join(', ')}`);
         
         // Import the expandServerOrGroup function
         const { expandServerOrGroup } = await import('./utils/config.js');
@@ -1170,7 +1210,7 @@ class McpServer {
         const expandedServerNames = new Set();
         
         // Expand each group filter to server names
-        for (const filter of groupFilters) {
+        for (const filter of this.#groupFilters) {
           try {
             const expanded = expandServerOrGroup(filter);
             expanded.forEach(name => expandedServerNames.add(name));
@@ -1203,7 +1243,7 @@ class McpServer {
       // Initialize the tool registry
       await this.#toolRegistry.load();
 
-      // Register this server instance
+      // Register this server instance with the actual process PID
       const pid = process.pid;
       const instanceId = instanceManager.registerInstance(
         pid,
@@ -1222,7 +1262,7 @@ class McpServer {
         },
         'stdio'
       );
-      console.info(`Registered self with instance ID: ${instanceId}`);
+      console.info(`Registered self with instance ID: ${instanceId} and PID: ${pid}`);
 
       // Connect to MCP clients
       await this.#connectToMcpClients();
