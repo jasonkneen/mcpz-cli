@@ -72,4 +72,4 @@ Thank you for your interest in contributing to the mcpsx.run CLI! This document 
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the project's [MIT License](LICENSE).
+By contributing, you agree that your contributions will be licensed under the project's [GNU GPLv3](LICENSE).

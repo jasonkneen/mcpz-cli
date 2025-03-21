@@ -35,14 +35,25 @@ const obfuscationOptions = {
 
 async function copyAndObfuscateFile(filePath, relativePath) {
   try {
-    // Skip obfuscation for all files now - directly copy files
+    // Read the file content
     const content = await fs.readFile(filePath, 'utf8');
+    
+    // Obfuscate JavaScript files
+    let processedContent = content;
+    if (filePath.endsWith('.js')) {
+      try {
+        const obfuscationResult = JavaScriptObfuscator.obfuscate(content, obfuscationOptions);
+        processedContent = obfuscationResult.getObfuscatedCode();
+      } catch (obfuscationError) {
+        console.info(`Warning: Could not obfuscate ${filePath}, using original content: ${obfuscationError.message}`);
+      }
+    }
     
     const targetPath = path.join(distDir, relativePath);
     const targetDir = path.dirname(targetPath);
     
     await fs.mkdir(targetDir, { recursive: true });
-    await fs.writeFile(targetPath, content);
+    await fs.writeFile(targetPath, processedContent);
     console.info(`Copied: ${relativePath}`);
   } catch (error) {
     console.info(`Error processing ${filePath}:`, error);
@@ -77,7 +88,14 @@ async function copyPackageJson() {
   }
   
   // Change files array to include everything
-  pkg.files = ['.'];
+  pkg.files = ['.', './utils', './commands'];
+  
+  // Add exports field to ensure utils directory is correctly importable
+  pkg.exports = {
+    '.': './index.js',
+    './utils/*': './utils/*.js',
+    './commands/*': './commands/*.js'
+  };
   
   // Add explicit dependencies to ensure utils directory is included
   if (!pkg.dependencies) {
@@ -145,13 +163,26 @@ async function copyUtilsDirectory() {
   try {
     await fs.mkdir(distUtilsDir, { recursive: true });
     
-    // Copy all utils files
+    // Copy all utils files with obfuscation
     const utilFiles = await fs.readdir(srcUtilsDir);
     for (const file of utilFiles) {
       if (file.endsWith('.js')) {
         const srcPath = path.join(srcUtilsDir, file);
         const destPath = path.join(distUtilsDir, file);
-        await fs.copyFile(srcPath, destPath);
+        
+        // Read, obfuscate, and write the file
+        const content = await fs.readFile(srcPath, 'utf8');
+        let processedContent = content;
+        
+        try {
+          const obfuscationResult = JavaScriptObfuscator.obfuscate(content, obfuscationOptions);
+          processedContent = obfuscationResult.getObfuscatedCode();
+          console.info(`Obfuscated utils/${file} for dist`);
+        } catch (obfuscationError) {
+          console.info(`Warning: Could not obfuscate utils/${file}, using original content: ${obfuscationError.message}`);
+        }
+        
+        await fs.writeFile(destPath, processedContent);
         console.info(`Copied utils/${file} to dist`);
       }
     }
@@ -164,6 +195,8 @@ async function copyUtilsDirectory() {
 
 async function main() {
   try {
+    console.info('Starting build with obfuscation enabled...');
+    
     // Clear dist directory if it exists
     try {
       await fs.rm(distDir, { recursive: true, force: true });
@@ -175,21 +208,37 @@ async function main() {
     await fs.mkdir(distDir, { recursive: true });
     
     // Process all files
+    console.info('Processing source files with obfuscation...');
     await processDirectory(srcDir);
     
-    // Ensure utils directory exists and files are copied
-    // This needs to run after processDirectory to ensure our
-    // non-obfuscated utils files replace any obfuscated ones
+    // Ensure utils directory exists and files are copied with obfuscation
+    console.info('Processing utils directory with obfuscation...');
     await copyUtilsDirectory();
     
     // Create updated package.json in dist
+    console.info('Updating package.json to include utils...');
     await copyPackageJson();
     
     // Copy additional files to dist
     await copyReadme();
     await copyBanner();
     
-    console.info('Build completed successfully!');
+    // Verify dist structure
+    console.info('Verifying dist directory structure...');
+    const distFiles = await fs.readdir(distDir, { withFileTypes: true });
+    console.info('Dist directory contents:', distFiles.map(f => f.name).join(', '));
+    
+    // Specifically check for utils directory
+    const hasUtils = distFiles.some(f => f.name === 'utils' && f.isDirectory());
+    if (hasUtils) {
+      console.info('Utils directory correctly included in dist');
+      const utilsFiles = await fs.readdir(path.join(distDir, 'utils'));
+      console.info('Utils files:', utilsFiles.join(', '));
+    } else {
+      console.info('WARNING: Utils directory not found in dist!');
+    }
+    
+    console.info('Build completed successfully with obfuscation!');
   } catch (error) {
     console.info('Build failed:', error);
     process.exit(1);

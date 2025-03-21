@@ -1,6 +1,6 @@
 {
   "name": "@mcpz/cli",
-  "version": "1.0.23",
+  "version": "1.0.28",
   "description": "Command line interface for Model Context Protocol servers and tools",
   "type": "module",
   "main": "dist/index.js",
@@ -11,12 +11,11 @@
     "mz": "dist/index.js"
   },
   "files": [
-    "dist",
-    "dist/**/*"
+    "dist"
   ],
   "scripts": {
     "build": "node src/build.js",
-    "test": "node --test --test-reporter=spec --test-reporter-destination=stdout",
+    "test": "node --test --test-reporter=spec --test-reporter-destination=dist/test-results.json",
     "test:single": "node --test",
     "test:watch": "node --test --watch",
     "lint": "eslint src/",
@@ -29,7 +28,7 @@
       "eslint --fix"
     ]
   },
-  "license": "MIT",
+  "license": "GNU GPLv3",
   "repository": {
     "type": "git",
     "url": "https://github.com/jasonkneen/mcpz-cli.git"
