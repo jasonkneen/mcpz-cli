@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "node src/build.js",
-    "test": "node --test",
+    "test": "node --test --test-reporter=spec --test-reporter-destination=stdout",
     "test:single": "node --test",
     "test:watch": "node --test --watch",
     "lint": "eslint src/",
