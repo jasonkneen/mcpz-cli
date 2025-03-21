@@ -67,8 +67,29 @@ import { config } from './commands/config.js';
 import { registerUpdateCommand } from './commands/update.js';
 // Get package version
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const packagePath = path.join(__dirname, '../package.json');
-const { version } = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+// Try multiple paths for the package.json
+let version = '1.0.30'; // Default fallback version
+try {
+  const possiblePaths = [
+    path.join(__dirname, '../package.json'),
+    path.join(__dirname, './package.json'),
+    path.resolve(__dirname, 'package.json')
+  ];
+  
+  for (const packagePath of possiblePaths) {
+    try {
+      if (fs.existsSync(packagePath)) {
+        const packageData = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+        version = packageData.version;
+        break;
+      }
+    } catch (e) {
+      // Continue to next path
+    }
+  }
+} catch (error) {
+  // Silently handle error and use default version
+}
 
 // Set up the program
 program

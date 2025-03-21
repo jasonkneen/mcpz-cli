@@ -70,10 +70,12 @@ async function copyPackageJson() {
   
   // Remove scripts from dist package.json - they're not needed there
   delete pkg.scripts;
+  delete pkg.husky;
+  delete pkg['lint-staged'];
   
   if (pkg.bin) {
     Object.keys(pkg.bin).forEach(key => {
-      pkg.bin[key] = './index.js';
+      pkg.bin[key] = 'index.js';  // Remove ./ to ensure proper resolution
     });
   }
   
@@ -87,8 +89,8 @@ async function copyPackageJson() {
     await fs.writeFile(indexPath, '#!/usr/bin/env node\n' + content);
   }
   
-  // Change files array to include everything
-  pkg.files = ['.', './utils', './commands'];
+  // Ensure we include all necessary files
+  pkg.files = ['index.js', 'utils', 'commands', 'server.js', 'banner.js'];
   
   // Add exports field to ensure utils directory is correctly importable
   pkg.exports = {
@@ -97,23 +99,45 @@ async function copyPackageJson() {
     './commands/*': './commands/*.js'
   };
   
-  // Add explicit dependencies to ensure utils directory is included
+  // Keep only runtime dependencies
   if (!pkg.dependencies) {
     pkg.dependencies = {};
   }
   
-  // Hide source code from npm website
+  // Remove all dev dependencies
+  delete pkg.devDependencies;
+  
+  // Update repository info
   pkg.repository = {
     type: 'git',
-    url: 'git+https://github.com/jasonkneen/mcpz.git',
-    directory: 'dist'
+    url: 'git+https://github.com/jasonkneen/mcpz.git'
   };
+  
+  // Set important flags to match the name of the package
+  if (pkg.name === '@mcpz/cli') {
+    // This ensures the installation works as expected
+    pkg.name = '@mcpz/cli';
+  }
   
   await fs.writeFile(
     path.join(distDir, 'package.json'),
     JSON.stringify(pkg, null, 2)
   );
   console.info('Updated package.json');
+  
+  // Create @mcpz/package.json just in case for backward compatibility
+  // This helps with the error when the CLI tries to load @mcpz/package.json
+  try {
+    const mcpzDir = path.join(distDir, '..', 'node_modules', '@mcpz');
+    await fs.mkdir(mcpzDir, { recursive: true });
+    await fs.writeFile(
+      path.join(mcpzDir, 'package.json'),
+      JSON.stringify({ name: '@mcpz', version: pkg.version }, null, 2)
+    );
+    console.info('Created backward compatibility package.json');
+  } catch (error) {
+    console.info('Warning: Could not create backward compatibility package.json:', error.message);
+  }
 }
 
 async function processDirectory(directory, baseDir = srcDir) {
