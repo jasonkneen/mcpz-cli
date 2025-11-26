@@ -1,571 +1,567 @@
-// Import necessary modules
-import chalk from 'chalk';
-import boxen from 'boxen';
+#!/usr/bin/env node
+import React from 'react';
+import { render, Box, Text, useInput, useApp, useStdin } from 'ink';
+import TextInput from 'ink-text-input';
+import Spinner from 'ink-spinner';
+import Fuse from 'fuse.js';
 import { spawn } from 'child_process';
 import { InstanceManager } from '../utils/instanceManager.js';
-import { readConfig } from '../utils/config.js';
+import { readConfig, getGroups } from '../utils/config.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
-import logUpdate from 'log-update';
-import termSize from 'term-size';
 
-// Dynamic path resolution for current script
+const { useState, useEffect, useCallback, useMemo, createElement: h } = React;
+
+// Dynamic path resolution
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const binPath = path.resolve(__dirname, '../../dist/index.js');
 
-// Command history management
-const MAX_HISTORY = 50;
+// History file
 const homedir = process.env.HOME || process.env.USERPROFILE || os.homedir();
 const historyFile = path.join(homedir, '.mcpz_history');
+const MAX_HISTORY = 100;
 
-// Terminal size
-const { columns, rows } = termSize();
+// Available commands for autocomplete
+const COMMANDS = [
+  { name: '/help', description: 'Show available commands' },
+  { name: '/list', description: 'List all configured MCP servers' },
+  { name: '/servers', description: 'List all servers' },
+  { name: '/tools', description: 'List available tools' },
+  { name: '/groups', description: 'List server groups' },
+  { name: '/run', description: 'Run MCP server (--server, --tools, --group)' },
+  { name: '/use', description: 'Use a specific MCP server' },
+  { name: '/add', description: 'Add new MCP configuration' },
+  { name: '/remove', description: 'Remove MCP configuration' },
+  { name: '/status', description: 'Show running instances status' },
+  { name: '/kill', description: 'Kill a running instance' },
+  { name: '/clear', description: 'Clear screen output' },
+  { name: '/exit', description: 'Exit interactive mode' },
+  { name: '/quit', description: 'Exit interactive mode' },
+];
 
-// Define UI elements
-const PROMPT = chalk.green('> ');
-const INPUT_BOX_HEIGHT = 3;
-
-// UI state
-let inputValue = '';
-let commandHistory = [];
-let historyIndex = -1;
-let output = [];
-let isRunning = false;
-let mcps = [];
-let instances = [];
-
-/**
- * Renders the status bar with instance information
- */
-function renderStatusBar() {
-  const runningCount = instances.filter(i => i.status === 'running').length;
-  const errorCount = instances.filter(i => i.status === 'error').length;
-  
-  // Calculate total memory usage
-  const totalMemory = instances
-    .filter(i => i.status === 'running' && i.resourceUsage && i.resourceUsage.memory)
-    .reduce((sum, i) => {
-      const memory = parseFloat(i.resourceUsage.memory);
-      return isNaN(memory) ? sum : sum + memory;
-    }, 0);
-  
-  // Format memory display
-  const memoryDisplay = totalMemory > 0 
-    ? `${chalk.magenta('Memory:')} ${chalk.white(totalMemory.toFixed(1) + ' MB')}` 
-    : '';
-  
-  // Show server type counts
-  const serverTypes = instances
-    .filter(i => i.status === 'running' && i.displayInfo && i.displayInfo.type)
-    .reduce((types, i) => {
-      const type = i.displayInfo.type;
-      if (!types[type]) types[type] = 0;
-      types[type]++;
-      return types;
-    }, {});
-  
-  const typeDisplay = Object.entries(serverTypes)
-    .map(([type, count]) => `${chalk.cyan(type)}: ${chalk.white(count)}`)
-    .join(' ');
-  
-  // Construct the full status bar content with spacing
-  const content = [
-    `${chalk.green('Running:')} ${chalk.yellow(runningCount)}`,
-    errorCount > 0 ? `${chalk.red('Errors:')} ${chalk.yellow(errorCount)}` : '',
-    `${chalk.green('Total MCPs:')} ${chalk.yellow(mcps.length)}`,
-    memoryDisplay,
-    typeDisplay
-  ].filter(Boolean).join(' │ ');
-  
-  return boxen(content, {
-    padding: {
-      left: 1,
-      right: 1,
-      top: 0,
-      bottom: 0
-    },
-    margin: 0,
-    borderStyle: 'round',
-    borderColor: 'cyan',
-    dimBorder: false,
-    width: columns - 4
-  });
-}
-
-/**
- * Renders detailed instance information
- */
-function renderInstanceDetails() {
-  const runningInstances = instances.filter(i => i.status === 'running');
-  if (runningInstances.length === 0) return '';
-  
-  const instanceDetails = runningInstances.map(instance => {
-    // Format basic instance info
-    const pid = instance.pid ? chalk.yellow(`PID: ${instance.pid}`) : chalk.gray('PID: pending');
-    const name = chalk.green(instance.serverName);
-    const uptime = getUptime(instance.startTime);
-    
-    // Format resource usage if available
-    let resourceInfo = '';
-    if (instance.resourceUsage) {
-      const { memory, cpu, uptime: processUptime } = instance.resourceUsage;
-      const resourceParts = [];
-      
-      if (memory) resourceParts.push(`${chalk.magenta('Mem:')} ${chalk.white(memory)}`);
-      if (cpu) resourceParts.push(`${chalk.blue('CPU:')} ${chalk.white(cpu)}`);
-      if (processUptime) resourceParts.push(`${chalk.cyan('Time:')} ${chalk.white(processUptime)}`);
-      
-      resourceInfo = resourceParts.length > 0 ? `[${resourceParts.join(' ')}]` : '';
-    }
-    
-    // Format tool info if available
-    let toolInfo = '';
-    if (instance.mcpDetails && instance.mcpDetails.toolCount) {
-      toolInfo = `${chalk.cyan('Tools:')} ${chalk.white(instance.mcpDetails.toolCount)}`;
-    }
-    
-    // Format filters if available
-    let filterInfo = '';
-    if (instance.displayInfo && instance.displayInfo.filters) {
-      const { tools, servers, groups } = instance.displayInfo.filters;
-      const filterParts = [];
-      
-      if (tools && tools.length) filterParts.push(`tools:${tools.join(',')}`);
-      if (servers && servers.length) filterParts.push(`servers:${servers.join(',')}`);
-      if (groups && groups.length) filterParts.push(`groups:${groups.join(',')}`);
-      
-      if (filterParts.length > 0) {
-        filterInfo = `${chalk.yellow('Filters:')} ${chalk.gray(filterParts.join(' '))}`;
-      }
-    }
-    
-    // Combine all parts
-    return [
-      `${name} ${pid} ${chalk.gray(`(${uptime})`)}`,
-      resourceInfo,
-      toolInfo,
-      filterInfo
-    ].filter(Boolean).join(' ');
-  });
-  
-  return boxen(
-    instanceDetails.join('\n'),
-    {
-      title: chalk.bold('Running Instances'),
-      padding: 1,
-      margin: {
-        top: 1,
-        bottom: 1
-      },
-      borderStyle: 'round',
-      borderColor: 'green',
-      width: columns - 4
-    }
-  );
-}
-
-/**
- * Formats uptime in a human-readable way
- */
-function getUptime(startTime) {
-  const uptime = Date.now() - startTime;
-  const seconds = Math.floor(uptime / 1000);
-  
-  if (seconds < 60) {
-    return `${seconds}s`;
-  } else if (seconds < 3600) {
-    const minutes = Math.floor(seconds / 60);
-    return `${minutes}m ${seconds % 60}s`;
-  } else {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${minutes}m`;
-  }
-}
-
-/**
- * Renders the command output
- */
-function renderOutput() {
-  const outputHeight = rows - INPUT_BOX_HEIGHT - 6; // Reserve space for status bar and headers
-  const visibleOutput = output.slice(-outputHeight);
-  
-  return visibleOutput.map(item => {
-    if (item.type === 'command') {
-      return chalk.cyan(`> ${item.content}`);
-    } else if (item.type === 'running') {
-      return chalk.yellow('Running...');
-    } else if (item.type === 'error') {
-      return chalk.red(item.content);
-    } else {
-      return item.content;
-    }
-  }).join('\n');
-}
-
-/**
- * Renders the input box
- */
-function renderInputBox() {
-  // Add a cursor marker to show where input will appear
-  const cursorChar = '█';
-  const visibleInput = `${PROMPT}${inputValue}${chalk.cyan.bold(cursorChar)}`;
-  
-  return boxen(
-    visibleInput,
-    {
-      padding: {
-        left: 1,
-        right: 1,
-        top: 0,
-        bottom: 0
-      },
-      margin: {
-        top: 1,
-        bottom: 0
-      },
-      borderStyle: 'double',
-      borderColor: 'blue',
-      width: columns - 4
-      // Remove float: 'bottom' which was causing rendering issues
-    }
-  );
-}
-
-/**
- * Renders the welcome panel with helpful info
- */
-function renderWelcomePanel() {
-  return boxen(
-    `${chalk.green.bold('Welcome to mcpz!')}\n\n` +
-    `${chalk.yellow('Type')} ${chalk.cyan('/help')} ${chalk.yellow('for command help')}\n` +
-    `${chalk.dim(`Current working directory: ${process.cwd()}`)}`,
-    {
-      padding: 1,
-      margin: {
-        top: 0,
-        bottom: 1
-      },
-      borderStyle: 'round',
-      borderColor: 'green',
-      width: columns - 4
-    }
-  );
-}
-
-/**
- * Renders the entire UI
- */
-function renderUI() {
-  const header = chalk.green.bold('mcpz Interactive Mode (Ctrl+C or type exit to quit)');
-  const headerLine = chalk.dim('─'.repeat(columns));
-  
-  const statusBar = renderStatusBar();
-  const instanceDetails = renderInstanceDetails();
-  const welcomePanel = renderWelcomePanel();
-  const outputArea = renderOutput();
-  const inputBox = renderInputBox();
-  
-  // Calculate available height for the output area
-  const instanceDetailsHeight = instanceDetails ? instanceDetails.split('\n').length : 0;
-  const outputHeight = Math.max(
-    1, 
-    rows - INPUT_BOX_HEIGHT - 6 - instanceDetailsHeight - welcomePanel.split('\n').length
-  );
-  
-  // Adjust visible output based on available height
-  const visibleOutput = outputArea.split('\n').slice(-outputHeight).join('\n');
-  
-  // Clear the screen first to ensure clean rendering
-  process.stdout.write('\x1B[2J\x1B[0f');
-  
-  // Use console.log for output area to preserve ASCII art
-  console.clear();
-  console.log(
-    [
-      header,
-      headerLine,
-      statusBar,
-      instanceDetails, // Add the detailed instance panel
-      welcomePanel,
-      visibleOutput
-    ].filter(Boolean).join('\n')
-  );
-  
-  // Use logUpdate only for the input box to prevent flickering
-  logUpdate(inputBox);
-}
-
-/**
- * Execute command using the CLI binary
- */
-async function executeCommand(command) {
-  return new Promise((resolve, reject) => {
-    const args = command.split(' ');
-    const childProcess = spawn('node', [binPath, ...args], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    
-    let stdout = '';
-    let stderr = '';
-    
-    childProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-    
-    childProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-    
-    childProcess.on('close', (code) => {
-      resolve({ stdout, stderr, code });
-    });
-    
-    childProcess.on('error', (error) => {
-      reject(error);
-    });
-  });
-}
-
-/**
- * Handle command execution
- */
-async function handleCommand(command) {
-  // Add command to output
-  output.push({ type: 'command', content: command });
-  isRunning = true;
-  output.push({ type: 'running' });
-  renderUI();
-  
-  try {
-    // Add to history
-    addToHistory(command);
-    
-    const { stdout, stderr, code } = await executeCommand(command);
-    
-    // Remove running indicator
-    output = output.filter(item => item.type !== 'running');
-    
-    // Add command output
-    if (stdout.trim()) {
-      output.push({ type: 'output', content: stdout.trim() });
-    }
-    
-    if (stderr.trim()) {
-      output.push({ type: 'error', content: stderr.trim() });
-    }
-    
-    if (code !== 0 && !stderr.trim()) {
-      output.push({ type: 'error', content: `Command exited with code ${code}` });
-    }
-  } catch (error) {
-    output = output.filter(item => item.type !== 'running');
-    output.push({ type: 'error', content: error.message });
-  } finally {
-    isRunning = false;
-    renderUI();
-  }
-}
-
-/**
- * Load command history
- */
+// Load command history from file
 function loadHistory() {
   try {
     if (fs.existsSync(historyFile)) {
-      const historyData = fs.readFileSync(historyFile, 'utf-8');
-      commandHistory = historyData.split('\n').filter(Boolean);
+      return fs.readFileSync(historyFile, 'utf-8').split('\n').filter(Boolean);
     }
-  } catch (error) {
+  } catch {
+    // Silently fail
+  }
+  return [];
+}
+
+// Save command to history
+function saveHistory(history) {
+  try {
+    fs.writeFileSync(historyFile, history.slice(0, MAX_HISTORY).join('\n'));
+  } catch {
     // Silently fail
   }
 }
 
-/**
- * Save command to history
- */
-function addToHistory(cmd) {
-  if (!cmd.trim()) return;
-  
-  commandHistory = [cmd, ...commandHistory.filter(item => item !== cmd)].slice(0, MAX_HISTORY);
-  historyIndex = -1;
-  
-  try {
-    fs.writeFileSync(historyFile, commandHistory.join('\n'));
-  } catch (error) {
-    // Silently fail
-  }
+// Status Bar Component
+function StatusBar({ instances, servers, groups }) {
+  const runningCount = instances.filter(i => i.status === 'running').length;
+  const errorCount = instances.filter(i => i.status === 'error').length;
+
+  return h(Box, {
+    borderStyle: 'round',
+    borderColor: 'cyan',
+    paddingX: 1,
+    width: '100%'
+  },
+  h(Text, null,
+    h(Text, { color: 'green' }, 'Running: '),
+    h(Text, { color: 'yellow' }, runningCount),
+    h(Text, null, ' | '),
+    errorCount > 0 && h(React.Fragment, null,
+      h(Text, { color: 'red' }, 'Errors: '),
+      h(Text, { color: 'yellow' }, errorCount),
+      h(Text, null, ' | ')
+    ),
+    h(Text, { color: 'green' }, 'Servers: '),
+    h(Text, { color: 'yellow' }, servers.length),
+    h(Text, null, ' | '),
+    h(Text, { color: 'green' }, 'Groups: '),
+    h(Text, { color: 'yellow' }, Object.keys(groups).length)
+  )
+  );
 }
 
-/**
- * Handle keyboard input
- */
-function setupKeyboardHandling() {
-  try {
-    // Check if we're in a TTY environment that supports raw mode
-    if (!process.stdin.isTTY) {
-      console.error('Interactive mode requires a TTY environment. Please run in a terminal.');
-      process.exit(1);
+// Autocomplete Suggestions Component
+function AutocompleteSuggestions({ suggestions, selectedIndex }) {
+  if (suggestions.length === 0) return null;
+
+  return h(Box, {
+    flexDirection: 'column',
+    marginTop: 1,
+    borderStyle: 'single',
+    borderColor: 'gray',
+    paddingX: 1
+  },
+  h(Text, { color: 'gray', dimColor: true }, 'Suggestions (Tab to select, Enter to confirm):'),
+  ...suggestions.slice(0, 5).map((suggestion, index) =>
+    h(Text, { key: index, color: index === selectedIndex ? 'cyan' : 'white' },
+      index === selectedIndex ? '> ' : '  ',
+      h(Text, { bold: index === selectedIndex }, suggestion.name),
+      suggestion.description && h(Text, { color: 'gray', dimColor: true }, ' - ' + suggestion.description)
+    )
+  ),
+  suggestions.length > 5 && h(Text, { color: 'gray', dimColor: true }, '...and ' + (suggestions.length - 5) + ' more')
+  );
+}
+
+// Output Line Component
+function OutputLine({ line }) {
+  if (line.type === 'command') {
+    return h(Text, { color: 'cyan' }, '> ' + line.content);
+  } else if (line.type === 'error') {
+    return h(Text, { color: 'red' }, line.content);
+  } else if (line.type === 'success') {
+    return h(Text, { color: 'green' }, line.content);
+  } else if (line.type === 'info') {
+    return h(Text, { color: 'blue' }, line.content);
+  } else if (line.type === 'warning') {
+    return h(Text, { color: 'yellow' }, line.content);
+  } else if (line.type === 'running') {
+    return h(Text, null,
+      h(Text, { color: 'yellow' }, h(Spinner, { type: 'dots' })),
+      h(Text, null, ' Running...')
+    );
+  }
+  return h(Text, null, line.content);
+}
+
+// Help Panel Component
+function HelpPanel() {
+  return h(Box, {
+    flexDirection: 'column',
+    borderStyle: 'round',
+    borderColor: 'green',
+    paddingX: 1,
+    marginY: 1
+  },
+  h(Text, { color: 'green', bold: true }, 'Available Commands:'),
+  h(Text, null, ' '),
+  ...COMMANDS.map((cmd, idx) =>
+    h(Text, { key: idx },
+      h(Text, { color: 'cyan' }, cmd.name.padEnd(12)),
+      h(Text, { color: 'gray' }, ' ' + cmd.description)
+    )
+  ),
+  h(Text, null, ' '),
+  h(Text, { color: 'gray', dimColor: true }, 'Type a command or use Tab for autocomplete')
+  );
+}
+
+// Running Instances Component
+function RunningInstances({ instances }) {
+  const running = instances.filter(i => i.status === 'running');
+  if (running.length === 0) return null;
+
+  return h(Box, {
+    flexDirection: 'column',
+    borderStyle: 'round',
+    borderColor: 'green',
+    paddingX: 1,
+    marginY: 1
+  },
+  h(Text, { color: 'green', bold: true }, 'Running Instances:'),
+  ...running.map((instance, idx) =>
+    h(Box, { key: idx },
+      h(Text, { color: 'green' }, instance.serverName),
+      instance.pid && h(Text, { color: 'gray' }, ' (PID: ' + instance.pid + ')'),
+      instance.resourceUsage?.memory && h(Text, { color: 'magenta' }, ' Mem: ' + instance.resourceUsage.memory)
+    )
+  )
+  );
+}
+
+// Main Interactive App Component
+function InteractiveApp() {
+  const { exit } = useApp();
+  const { isRawModeSupported } = useStdin();
+
+  // State
+  const [input, setInput] = useState('');
+  const [output, setOutput] = useState([
+    { type: 'info', content: 'Welcome to mcpz interactive mode!' },
+    { type: 'info', content: 'Type /help for available commands, Tab for autocomplete' },
+  ]);
+  const [isRunning, setIsRunning] = useState(false);
+  const [history, setHistory] = useState(loadHistory);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [servers, setServers] = useState([]);
+  const [groups, setGroups] = useState({});
+  const [instances, setInstances] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0);
+  const [showHelp, setShowHelp] = useState(false);
+
+  // Load config on mount
+  useEffect(() => {
+    const config = readConfig();
+    setServers(config.servers || []);
+    setGroups(getGroups());
+
+    // Load instances
+    const instanceManager = InstanceManager.getInstance();
+    setInstances(instanceManager.getAllInstances());
+
+    // Listen for instance changes
+    const handleInstancesChanged = (updatedInstances) => {
+      setInstances(updatedInstances);
+    };
+    instanceManager.on('instances_changed', handleInstancesChanged);
+
+    return () => {
+      instanceManager.off('instances_changed', handleInstancesChanged);
+      instanceManager.stopHealthCheck();
+    };
+  }, []);
+
+  // Build autocomplete items
+  const autocompleteItems = useMemo(() => {
+    const items = [
+      ...COMMANDS,
+      ...servers.map(s => ({
+        name: s.name,
+        description: 'Server: ' + s.command,
+        type: 'server'
+      })),
+      ...Object.keys(groups).map(g => ({
+        name: g,
+        description: 'Group: ' + groups[g].join(', '),
+        type: 'group'
+      }))
+    ];
+    return items;
+  }, [servers, groups]);
+
+  // Fuse.js for fuzzy search
+  const fuse = useMemo(() => {
+    return new Fuse(autocompleteItems, {
+      keys: ['name', 'description'],
+      threshold: 0.3,
+      includeScore: true
+    });
+  }, [autocompleteItems]);
+
+  // Update suggestions based on input
+  useEffect(() => {
+    if (!input.trim()) {
+      setSuggestions([]);
+      setSelectedSuggestion(0);
+      return;
     }
-    
-    // Enter raw mode to capture keystrokes directly
-    process.stdin.setRawMode(true);
-    process.stdin.resume();
-    process.stdin.setEncoding('utf8');
-    
-    // Buffer for escape sequences
-    let escapeBuffer = '';
-    let escapeTimeout;
-    
-    // Handle keystroke input
-    process.stdin.on('data', (key) => {
-      // Handle escape sequences
-      if (escapeBuffer.length > 0) {
-        escapeBuffer += key;
-        clearTimeout(escapeTimeout);
-        
-        // Process known escape sequences
-        if (escapeBuffer === '\u001b[A') { // Up arrow
-          if (commandHistory.length > 0 && historyIndex < commandHistory.length - 1) {
-            historyIndex++;
-            inputValue = commandHistory[historyIndex];
-          }
-          escapeBuffer = '';
-        } else if (escapeBuffer === '\u001b[B') { // Down arrow
-          if (historyIndex > 0) {
-            historyIndex--;
-            inputValue = commandHistory[historyIndex];
-          } else if (historyIndex === 0) {
-            historyIndex = -1;
-            inputValue = '';
-          }
-          escapeBuffer = '';
-        } else if (escapeBuffer === '\u001b[C') { // Right arrow
-          // Cursor movement logic if needed
-          escapeBuffer = '';
-        } else if (escapeBuffer === '\u001b[D') { // Left arrow
-          // Cursor movement logic if needed
-          escapeBuffer = '';
-        } else if (escapeBuffer.length >= 3) {
-          // Unknown escape sequence, discard
-          escapeBuffer = '';
+
+    const results = fuse.search(input);
+    setSuggestions(results.map(r => r.item));
+    setSelectedSuggestion(0);
+  }, [input, fuse]);
+
+  // Add output line
+  const addOutput = useCallback((line) => {
+    setOutput(prev => [...prev.slice(-50), line]);
+  }, []);
+
+  // Run CLI command
+  const runCliCommand = useCallback((command) => {
+    return new Promise((resolve, reject) => {
+      const args = command.split(' ');
+      const child = spawn('node', [binPath, ...args], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+
+      child.stdout.on('data', (data) => {
+        stdout += data.toString();
+      });
+
+      child.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      child.on('close', (code) => {
+        resolve({ stdout, stderr, code });
+      });
+
+      child.on('error', (error) => {
+        reject(error);
+      });
+    });
+  }, []);
+
+  // Execute command
+  const executeCommand = useCallback(async (command) => {
+    addOutput({ type: 'command', content: command });
+
+    const trimmed = command.trim();
+
+    // Handle slash commands
+    if (trimmed.startsWith('/')) {
+      const parts = trimmed.slice(1).split(' ');
+      const cmd = parts[0].toLowerCase();
+      const args = parts.slice(1);
+
+      switch (cmd) {
+      case 'help':
+        setShowHelp(true);
+        return;
+
+      case 'clear':
+        setOutput([]);
+        setShowHelp(false);
+        return;
+
+      case 'exit':
+      case 'quit':
+        exit();
+        return;
+
+      case 'list':
+      case 'servers':
+        if (servers.length === 0) {
+          addOutput({ type: 'warning', content: 'No servers configured' });
         } else {
-          // Wait for more characters
-          escapeTimeout = setTimeout(() => {
-            escapeBuffer = '';
-          }, 50);
+          addOutput({ type: 'info', content: 'Configured Servers:' });
+          servers.forEach(s => {
+            addOutput({
+              type: 'output',
+              content: '  ' + s.name + ' - ' + s.command + ' ' + (s.enabled ? '(enabled)' : '(disabled)')
+            });
+          });
+        }
+        return;
+
+      case 'groups':
+        const groupNames = Object.keys(groups);
+        if (groupNames.length === 0) {
+          addOutput({ type: 'warning', content: 'No groups defined' });
+        } else {
+          addOutput({ type: 'info', content: 'Server Groups:' });
+          groupNames.forEach(g => {
+            addOutput({ type: 'output', content: '  ' + g + ': ' + groups[g].join(', ') });
+          });
+        }
+        return;
+
+      case 'status':
+        const running = instances.filter(i => i.status === 'running');
+        if (running.length === 0) {
+          addOutput({ type: 'warning', content: 'No running instances' });
+        } else {
+          addOutput({ type: 'info', content: 'Running Instances:' });
+          running.forEach(i => {
+            addOutput({
+              type: 'output',
+              content: '  ' + i.serverName + ' - PID: ' + (i.pid || 'N/A') + ' - ' + i.status
+            });
+          });
+        }
+        return;
+
+      case 'kill':
+        if (args.length === 0) {
+          addOutput({ type: 'error', content: 'Usage: /kill <server-name|instance-id>' });
           return;
         }
-      } else if (key === '\u001b') { // Escape
-        escapeBuffer = key;
-        escapeTimeout = setTimeout(() => {
-          escapeBuffer = '';
-        }, 50);
+        const toKill = args[0];
+        const instanceManager = InstanceManager.getInstance();
+        const targetInstances = instances.filter(
+          i => i.serverName === toKill || i.id === toKill
+        );
+        if (targetInstances.length === 0) {
+          addOutput({ type: 'error', content: 'No instance found: ' + toKill });
+        } else {
+          targetInstances.forEach(i => {
+            const success = instanceManager.killInstance(i.id);
+            if (success) {
+              addOutput({ type: 'success', content: 'Killed instance: ' + i.serverName });
+            } else {
+              addOutput({ type: 'error', content: 'Failed to kill: ' + i.serverName });
+            }
+          });
+        }
         return;
-      }
-      
-      // Handle standard keys
-      if (key === '\u0003') { // Ctrl+C
-        process.exit(0);
-      } else if (key === '\r' || key === '\n') { // Enter
-        if (inputValue.trim() === 'exit' || inputValue.trim() === 'quit') {
-          process.exit(0);
-        }
-        
-        if (inputValue.trim() && !isRunning) {
-          handleCommand(inputValue.trim());
-          inputValue = '';
-        }
-      } else if (key === '\u007f') { // Backspace
-        inputValue = inputValue.slice(0, -1);
-      } else if (key.charCodeAt(0) >= 32 && key.charCodeAt(0) <= 126) { // Printable characters
-        inputValue += key;
-      }
-      
-      renderUI();
-    });
-    
-    // Set up cleanup
-    process.on('SIGINT', () => {
-      process.exit(0);
-    });
-    
-    process.on('exit', () => {
-      // Reset terminal settings
-      if (process.stdin.isTTY) {
-        process.stdin.setRawMode(false);
-        process.stdout.write('\x1B[?25h'); // Show cursor
-      }
-    });
-  } catch (error) {
-    console.error(`Error setting up keyboard handling: ${error.message}`);
-    console.error('Interactive mode not available in this environment. Try using regular commands instead.');
-    process.exit(1);
-  }
-}
 
-/**
- * Load MCP configurations and instances
- */
-function setupInstanceTracking() {
-  // Load MCP configurations
-  const config = readConfig();
-  mcps = config.servers || [];
-  
-  // Set up instance tracking
-  const instanceManager = InstanceManager.getInstance();
-  instances = instanceManager.getAllInstances();
-  
-  instanceManager.on('instances_changed', (updatedInstances) => {
-    instances = updatedInstances;
-    renderUI();
+      case 'tools':
+        addOutput({ type: 'info', content: 'Fetching tools (this runs the MCP server)...' });
+        break;
+
+      default:
+        break;
+      }
+    }
+
+    // Execute via CLI
+    setIsRunning(true);
+    addOutput({ type: 'running' });
+
+    try {
+      let cliCommand = trimmed;
+      if (cliCommand.startsWith('/')) {
+        cliCommand = cliCommand.slice(1);
+      }
+
+      const result = await runCliCommand(cliCommand);
+
+      setOutput(prev => prev.filter(line => line.type !== 'running'));
+
+      if (result.stdout.trim()) {
+        result.stdout.trim().split('\n').forEach(line => {
+          addOutput({ type: 'output', content: line });
+        });
+      }
+
+      if (result.stderr.trim()) {
+        result.stderr.trim().split('\n').forEach(line => {
+          addOutput({ type: 'error', content: line });
+        });
+      }
+
+      if (result.code !== 0 && !result.stderr.trim()) {
+        addOutput({ type: 'error', content: 'Command exited with code ' + result.code });
+      }
+    } catch (error) {
+      setOutput(prev => prev.filter(line => line.type !== 'running'));
+      addOutput({ type: 'error', content: error.message });
+    } finally {
+      setIsRunning(false);
+    }
+  }, [addOutput, exit, servers, groups, instances, runCliCommand]);
+
+  // Handle submit
+  const handleSubmit = useCallback((value) => {
+    if (!value.trim() || isRunning) return;
+
+    setShowHelp(false);
+
+    const newHistory = [value, ...history.filter(h => h !== value)].slice(0, MAX_HISTORY);
+    setHistory(newHistory);
+    saveHistory(newHistory);
+    setHistoryIndex(-1);
+
+    executeCommand(value);
+
+    setInput('');
+    setSuggestions([]);
+  }, [history, isRunning, executeCommand]);
+
+  // Handle input key events
+  useInput((inputChar, key) => {
+    if (isRunning) return;
+
+    if (key.tab && suggestions.length > 0) {
+      const selected = suggestions[selectedSuggestion];
+      if (selected) {
+        setInput(selected.name + ' ');
+        setSuggestions([]);
+      }
+      return;
+    }
+
+    if (key.upArrow) {
+      if (suggestions.length > 0) {
+        setSelectedSuggestion(prev => Math.max(0, prev - 1));
+      } else if (historyIndex < history.length - 1) {
+        const newIndex = historyIndex + 1;
+        setHistoryIndex(newIndex);
+        setInput(history[newIndex] || '');
+      }
+      return;
+    }
+
+    if (key.downArrow) {
+      if (suggestions.length > 0) {
+        setSelectedSuggestion(prev => Math.min(suggestions.length - 1, prev + 1));
+      } else if (historyIndex > -1) {
+        const newIndex = historyIndex - 1;
+        setHistoryIndex(newIndex);
+        setInput(newIndex >= 0 ? history[newIndex] : '');
+      }
+      return;
+    }
+
+    if (key.escape) {
+      setSuggestions([]);
+      setShowHelp(false);
+      return;
+    }
+
+    if (key.ctrl && inputChar === 'c') {
+      exit();
+      return;
+    }
   });
+
+  // Check for raw mode support
+  if (!isRawModeSupported) {
+    return h(Box, { flexDirection: 'column', padding: 1 },
+      h(Text, { color: 'red' }, 'Interactive mode requires a TTY terminal with raw mode support.'),
+      h(Text, { color: 'yellow' }, 'Please run in a proper terminal environment.')
+    );
+  }
+
+  return h(Box, { flexDirection: 'column', height: '100%' },
+    // Header
+    h(Box, { paddingX: 1, marginBottom: 1 },
+      h(Text, { color: 'green', bold: true }, 'mcpz Interactive Mode'),
+      h(Text, { color: 'gray' }, ' (Ctrl+C to exit)')
+    ),
+
+    // Status Bar
+    h(StatusBar, { instances, servers, groups }),
+
+    // Running Instances
+    h(RunningInstances, { instances }),
+
+    // Help Panel (conditional)
+    showHelp && h(HelpPanel),
+
+    // Output Area
+    h(Box, { flexDirection: 'column', flexGrow: 1, paddingX: 1, marginY: 1 },
+      ...output.slice(-20).map((line, idx) =>
+        h(OutputLine, { key: idx, line })
+      )
+    ),
+
+    // Autocomplete Suggestions
+    h(AutocompleteSuggestions, { suggestions, selectedIndex: selectedSuggestion }),
+
+    // Input Box
+    h(Box, { borderStyle: 'double', borderColor: 'blue', paddingX: 1 },
+      h(Text, { color: 'green' }, '> '),
+      h(TextInput, {
+        value: input,
+        onChange: setInput,
+        onSubmit: handleSubmit,
+        placeholder: 'Type a command (Tab for autocomplete)...'
+      })
+    )
+  );
 }
 
-/**
- * Start the interactive CLI
- */
+// Export the interactive function
 export async function interactive() {
   try {
-    // Check if interactive mode is disabled
-    console.log(
-      boxen(chalk.yellow('Interactive mode is currently disabled.'), {
-        padding: 1,
-        margin: 1,
-        borderStyle: 'round',
-        borderColor: 'red',
-      })
-    );
-    process.exit(0);
-    
-    // The code below will not execute unless the early exit is removed
-    
-    // Display welcome message
-    console.log(
-      boxen(chalk.green('Starting mcpz interactive mode...'), {
-        padding: 1,
-        margin: 1,
-        borderStyle: 'round',
-        borderColor: 'cyan',
-      })
-    );
-    
-    // Clear console
-    console.clear();
-    
-    // Initialize
-    loadHistory();
-    setupInstanceTracking();
-    setupKeyboardHandling();
-    
-    // Initial render
-    renderUI();
+    if (!process.stdin.isTTY) {
+      console.error('Interactive mode requires a TTY terminal.');
+      console.error('Please run in a terminal with TTY support.');
+      process.exit(1);
+    }
+
+    const { waitUntilExit } = render(h(InteractiveApp));
+
+    await waitUntilExit();
   } catch (error) {
-    console.error(chalk.red(`Error starting interactive mode: ${error.message}`));
-    console.error(chalk.yellow('Interactive mode is only available in a terminal environment.'));
+    console.error('Error starting interactive mode:', error.message);
     process.exit(1);
   }
 }
