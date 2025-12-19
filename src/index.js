@@ -106,8 +106,13 @@ program
   .option('-S, --servers <names>', 'Filter to load only specific servers (comma-separated)')
   .option('-t, --tool <n>', 'Filter to load only a specific tool')
   .option('-T, --tools <names>', 'Filter to load only specific tools (comma-separated)')
-  .option('-g, --group <n>', 'Filter to load only servers in a specific group')
-  .option('-G, --groups <names>', 'Filter to load only servers in specific groups (comma-separated)')
+  .option('-b, --toolbox <n>', 'Filter to load only servers in a specific toolbox')
+  .option('-B, --toolboxes <names>', 'Filter to load only servers in specific toolboxes (comma-separated)')
+  .option('-k, --skill <n>', 'Filter to load only a specific skill')
+  .option('-K, --skills <names>', 'Filter to load only specific skills (comma-separated)')
+  // Hidden aliases for backwards compatibility
+  .option('-g, --group <n>', 'deprecated: use --toolbox')
+  .option('-G, --groups <names>', 'deprecated: use --toolboxes')
   .action((options) => {
     // Import server dynamically to avoid loading it unnecessarily
     import('./server.js').then(({ default: server }) => {
@@ -117,43 +122,253 @@ program
     });
   });
 
-// Server group management commands
+// Toolbox management commands (primary)
 program
-  .command('groups')
-  .description('Manage MCP server and tool groups')
+  .command('toolbox')
+  .description('Manage MCP server toolboxes')
   .addCommand(
     new Command('add')
-      .description('Create a new server group')
-      .argument('<n>', 'Name of the group')
-      .option('-s, --servers <servers>', 'Comma-separated list of server names to include in the group')
+      .description('Create a new server toolbox')
+      .argument('<n>', 'Name of the toolbox')
+      .option('-s, --servers <servers>', 'Comma-separated list of server names to include in the toolbox')
       .action((name, options) => {
-        import('./commands/groups.js').then(({ addGroup }) => {
-          addGroup(name, options);
+        import('./commands/toolbox.js').then(({ addToolbox }) => {
+          addToolbox(name, options);
         }).catch(error => {
-          console.info(chalk.red(`Error adding group: ${error.message}`));
+          console.info(chalk.red(`Error adding toolbox: ${error.message}`));
         });
       })
   )
   .addCommand(
     new Command('remove')
-      .description('Remove a server group')
-      .argument('<n>', 'Name of the group to remove')
+      .description('Remove a server toolbox')
+      .argument('<n>', 'Name of the toolbox to remove')
       .action((name) => {
-        import('./commands/groups.js').then(({ removeGroup }) => {
-          removeGroup(name);
+        import('./commands/toolbox.js').then(({ removeToolbox }) => {
+          removeToolbox(name);
         }).catch(error => {
-          console.info(chalk.red(`Error removing group: ${error.message}`));
+          console.info(chalk.red(`Error removing toolbox: ${error.message}`));
         });
       })
   )
   .addCommand(
     new Command('list')
-      .description('List all server groups')
+      .description('List all server toolboxes')
       .action(() => {
-        import('./commands/groups.js').then(({ listGroups }) => {
-          listGroups();
+        import('./commands/toolbox.js').then(({ listToolboxes }) => {
+          listToolboxes();
         }).catch(error => {
-          console.info(chalk.red(`Error listing groups: ${error.message}`));
+          console.info(chalk.red(`Error listing toolboxes: ${error.message}`));
+        });
+      })
+  );
+
+// Hidden 'groups' alias for backwards compatibility
+const groupsCmd = program
+  .command('groups', { hidden: true })
+  .description('(deprecated) Use "toolbox" instead')
+  .addCommand(
+    new Command('add')
+      .argument('<n>', 'Name')
+      .option('-s, --servers <servers>', 'Servers')
+      .action((name, options) => {
+        console.warn(chalk.yellow('[mcpz] Warning: "groups" is deprecated, please use "toolbox" instead'));
+        import('./commands/toolbox.js').then(({ addToolbox }) => {
+          addToolbox(name, options);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('remove')
+      .argument('<n>', 'Name')
+      .action((name) => {
+        console.warn(chalk.yellow('[mcpz] Warning: "groups" is deprecated, please use "toolbox" instead'));
+        import('./commands/toolbox.js').then(({ removeToolbox }) => {
+          removeToolbox(name);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('list')
+      .action(() => {
+        console.warn(chalk.yellow('[mcpz] Warning: "groups" is deprecated, please use "toolbox" instead'));
+        import('./commands/toolbox.js').then(({ listToolboxes }) => {
+          listToolboxes();
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  );
+
+// Skills management commands
+program
+  .command('skill')
+  .alias('skills')
+  .description('Manage Agent Skills')
+  .addCommand(
+    new Command('list')
+      .description('List all installed skills')
+      .action(() => {
+        import('./commands/skills.js').then(({ list }) => {
+          list();
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('show')
+      .description('Show details for a skill')
+      .argument('<n>', 'Name of the skill')
+      .action((name) => {
+        import('./commands/skills.js').then(({ show }) => {
+          show(name);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('dir')
+      .description('Show skills directory path')
+      .action(() => {
+        import('./commands/skills.js').then(({ dir }) => {
+          dir();
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('install')
+      .description('Install a skill from GitHub or URL')
+      .argument('<source>', 'Install source (github:user/repo or URL)')
+      .option('-n, --name <name>', 'Override the skill name')
+      .action((source, options) => {
+        import('./commands/skills.js').then(({ install }) => {
+          install(source, options);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('remove')
+      .description('Remove an installed skill')
+      .argument('<n>', 'Name of the skill to remove')
+      .action((name) => {
+        import('./commands/skills.js').then(({ remove }) => {
+          remove(name);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  );
+
+// Plugin management commands
+program
+  .command('plugin')
+  .alias('plugins')
+  .description('Manage plugins and marketplaces')
+  .addCommand(
+    new Command('list')
+      .description('List all installed plugins')
+      .action(() => {
+        import('./commands/plugins.js').then(({ list }) => {
+          list();
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('install')
+      .description('Install a plugin')
+      .argument('<n>', 'Name of the plugin')
+      .option('-f, --from <repo>', 'Marketplace repository URL or shorthand')
+      .action((name, options) => {
+        import('./commands/plugins.js').then(({ install }) => {
+          install(name, options);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('uninstall')
+      .description('Uninstall a plugin')
+      .argument('<n>', 'Name of the plugin')
+      .action((name) => {
+        import('./commands/plugins.js').then(({ uninstall }) => {
+          uninstall(name);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('browse')
+      .description('Browse plugins in a marketplace')
+      .argument('<repo>', 'Marketplace repository URL or shorthand')
+      .action((repo) => {
+        import('./commands/plugins.js').then(({ browse }) => {
+          browse(repo);
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
+        });
+      })
+  )
+  .addCommand(
+    new Command('marketplace')
+      .description('Manage marketplaces')
+      .addCommand(
+        new Command('list')
+          .description('List configured marketplaces')
+          .action(() => {
+            import('./commands/plugins.js').then(({ marketplaceList }) => {
+              marketplaceList();
+            }).catch(error => {
+              console.info(chalk.red(`Error: ${error.message}`));
+            });
+          })
+      )
+      .addCommand(
+        new Command('add')
+          .description('Add a marketplace')
+          .argument('<repo>', 'Repository URL or GitHub shorthand')
+          .action((repo) => {
+            import('./commands/plugins.js').then(({ marketplaceAdd }) => {
+              marketplaceAdd(repo);
+            }).catch(error => {
+              console.info(chalk.red(`Error: ${error.message}`));
+            });
+          })
+      )
+      .addCommand(
+        new Command('remove')
+          .description('Remove a marketplace')
+          .argument('<repo>', 'Repository URL or GitHub shorthand')
+          .action((repo) => {
+            import('./commands/plugins.js').then(({ marketplaceRemove }) => {
+              marketplaceRemove(repo);
+            }).catch(error => {
+              console.info(chalk.red(`Error: ${error.message}`));
+            });
+          })
+      )
+  )
+  .addCommand(
+    new Command('dir')
+      .description('Show plugins directory path')
+      .action(() => {
+        import('./commands/plugins.js').then(({ dir }) => {
+          dir();
+        }).catch(error => {
+          console.info(chalk.red(`Error: ${error.message}`));
         });
       })
   );
@@ -216,12 +431,15 @@ program.on('--help', () => {
     console.info('  $ mcpz run');
     console.info('  $ mcpz run --server="sleep"');
     console.info('  $ mcpz run --servers="python,pytorch" --tools="predict,generate"');
-    console.info('  $ mcpz run --group="python-stack"');
-    console.info('  $ mcpz run --groups="python-stack,ml-tools" --tools="predict"');
-    console.info('  $ mcpz groups add "python-stack" --servers="python,pytorch,huggingface"');
+    console.info('  $ mcpz run --toolbox="python-stack"');
+    console.info('  $ mcpz run --toolboxes="python-stack,ml-tools" --tools="predict"');
+    console.info('  $ mcpz run --skill="commit" --skill="test"');
+    console.info('  $ mcpz toolbox add "python-stack" --servers="python,pytorch,huggingface"');
     console.info('  $ mcpz run --servers="python-stack"');
     console.info('  $ mcpz tools');
     console.info('  $ mcpz tools --server="GPT Server"');
+    console.info('  $ mcpz skill list');
+    console.info('  $ mcpz skill install github:user/repo');
     console.info('  $ mcpz add "GPT Server" --command "node" --args "server.js"');
     console.info('  $ mcpz list');
   }

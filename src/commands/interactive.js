@@ -6,7 +6,8 @@ import Spinner from 'ink-spinner';
 import Fuse from 'fuse.js';
 import { spawn } from 'child_process';
 import { InstanceManager } from '../utils/instanceManager.js';
-import { readConfig, getGroups } from '../utils/config.js';
+import { readConfig, getToolboxes } from '../utils/config.js';
+import { listSkills } from '../utils/skills.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
@@ -83,8 +84,9 @@ const COMMANDS = [
   { name: '/list', description: 'List all configured MCP servers' },
   { name: '/servers', description: 'List all servers' },
   { name: '/tools', description: 'List available tools' },
-  { name: '/groups', description: 'List server groups' },
-  { name: '/run', description: 'Run MCP server (--server, --tools, --group)' },
+  { name: '/toolbox', description: 'List server toolboxes' },
+  { name: '/skills', description: 'List installed Agent Skills' },
+  { name: '/run', description: 'Run MCP server (--server, --tools, --toolbox, --skill)' },
   { name: '/use', description: 'Use a specific MCP server' },
   { name: '/add', description: 'Add new MCP configuration' },
   { name: '/remove', description: 'Remove MCP configuration' },
@@ -117,7 +119,7 @@ function saveHistory(history) {
 }
 
 // Status Bar Component
-function StatusBar({ instances, servers, groups }) {
+function StatusBar({ instances, servers, toolboxes }) {
   const runningCount = instances.filter(i => i.status === 'running').length;
   const errorCount = instances.filter(i => i.status === 'error').length;
 
@@ -139,8 +141,8 @@ function StatusBar({ instances, servers, groups }) {
     h(Text, { color: 'green' }, 'Servers: '),
     h(Text, { color: 'yellow' }, servers.length),
     h(Text, null, ' | '),
-    h(Text, { color: 'green' }, 'Groups: '),
-    h(Text, { color: 'yellow' }, Object.keys(groups).length)
+    h(Text, { color: 'green' }, 'Toolboxes: '),
+    h(Text, { color: 'yellow' }, Object.keys(toolboxes).length)
   )
   );
 }
@@ -249,7 +251,7 @@ function InteractiveApp() {
   const [history, setHistory] = useState(loadHistory);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [servers, setServers] = useState([]);
-  const [groups, setGroups] = useState({});
+  const [toolboxes, setToolboxes] = useState({});
   const [instances, setInstances] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
@@ -259,7 +261,7 @@ function InteractiveApp() {
   useEffect(() => {
     const config = readConfig();
     setServers(config.servers || []);
-    setGroups(getGroups());
+    setToolboxes(getToolboxes());
 
     // Load instances and clean up stale ones
     const instanceManager = InstanceManager.getInstance();
@@ -287,14 +289,14 @@ function InteractiveApp() {
         description: 'Server: ' + s.command,
         type: 'server'
       })),
-      ...Object.keys(groups).map(g => ({
+      ...Object.keys(toolboxes).map(g => ({
         name: g,
-        description: 'Group: ' + groups[g].join(', '),
-        type: 'group'
+        description: 'Toolbox: ' + toolboxes[g].join(', '),
+        type: 'toolbox'
       }))
     ];
     return items;
-  }, [servers, groups]);
+  }, [servers, toolboxes]);
 
   // Fuse.js for fuzzy search
   const fuse = useMemo(() => {
@@ -419,14 +421,42 @@ function InteractiveApp() {
         }
         return;
 
-      case 'groups':
-        const groupNames = Object.keys(groups);
-        if (groupNames.length === 0) {
-          addOutput({ type: 'warning', content: 'No groups defined' });
+      case 'toolbox':
+      case 'toolboxes':
+        const toolboxNames = Object.keys(toolboxes);
+        if (toolboxNames.length === 0) {
+          addOutput({ type: 'warning', content: 'No toolboxes defined' });
         } else {
-          addOutput({ type: 'info', content: 'Server Groups:' });
-          groupNames.forEach(g => {
-            addOutput({ type: 'output', content: '  ' + g + ': ' + groups[g].join(', ') });
+          addOutput({ type: 'info', content: 'Server Toolboxes:' });
+          toolboxNames.forEach(t => {
+            addOutput({ type: 'output', content: '  ' + t + ': ' + toolboxes[t].join(', ') });
+          });
+        }
+        return;
+
+      case 'groups':
+        // Deprecated alias
+        addOutput({ type: 'warning', content: '[mcpz] Warning: "groups" is deprecated, use "/toolbox" instead' });
+        const deprecatedToolboxNames = Object.keys(toolboxes);
+        if (deprecatedToolboxNames.length === 0) {
+          addOutput({ type: 'warning', content: 'No toolboxes defined' });
+        } else {
+          addOutput({ type: 'info', content: 'Server Toolboxes:' });
+          deprecatedToolboxNames.forEach(t => {
+            addOutput({ type: 'output', content: '  ' + t + ': ' + toolboxes[t].join(', ') });
+          });
+        }
+        return;
+
+      case 'skills':
+        const skills = listSkills();
+        if (skills.length === 0) {
+          addOutput({ type: 'warning', content: 'No skills installed' });
+          addOutput({ type: 'info', content: 'Install skills with: mcpz skill install github:user/repo' });
+        } else {
+          addOutput({ type: 'info', content: 'Installed Skills:' });
+          skills.forEach(s => {
+            addOutput({ type: 'output', content: '  ' + s.name + ' - ' + (s.description || 'No description') });
           });
         }
         return;
@@ -514,7 +544,7 @@ function InteractiveApp() {
     } finally {
       setIsRunning(false);
     }
-  }, [addOutput, exit, servers, groups, instances, runCliCommand]);
+  }, [addOutput, exit, servers, toolboxes, instances, runCliCommand]);
 
   // Handle submit
   const handleSubmit = useCallback((value) => {
@@ -596,7 +626,7 @@ function InteractiveApp() {
     ),
 
     // Status Bar
-    h(StatusBar, { instances, servers, groups }),
+    h(StatusBar, { instances, servers, toolboxes }),
 
     // Running Instances
     h(RunningInstances, { instances }),

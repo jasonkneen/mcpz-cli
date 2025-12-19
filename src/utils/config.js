@@ -193,65 +193,147 @@ export function removeServer(name) {
 }
 
 /**
- * Get all server groups from the configuration
- * @returns {Object} Object with group names as keys and arrays of server names as values
+ * Migrate config from old 'groups' to new 'toolboxes' format
+ * @param {Object} config - The config object to migrate
+ * @returns {{config: Object, migrated: boolean}} Migrated config and whether migration occurred
  */
-export function getGroups() {
-  const config = readConfig();
-  return config.groups || {};
+function migrateGroupsToToolboxes(config) {
+  if (config.groups && !config.toolboxes) {
+    // Migrate groups → toolboxes
+    config.toolboxes = config.groups;
+    delete config.groups;
+    return { config, migrated: true };
+  }
+  return { config, migrated: false };
 }
 
 /**
- * Add or update a server group
- * @param {string} name - Group name
- * @param {string[]} servers - List of server names in the group
+ * Read config with automatic migration from groups → toolboxes
+ * @returns {Object} The configuration object (migrated if needed)
+ */
+function readConfigWithMigration() {
+  const config = readConfig();
+  const { config: migratedConfig, migrated } = migrateGroupsToToolboxes(config);
+
+  if (migrated) {
+    // Auto-save the migrated config
+    writeConfig(migratedConfig);
+    console.info('\x1b[33m[mcpz] Config migrated: "groups" → "toolboxes"\x1b[0m');
+  }
+
+  return migratedConfig;
+}
+
+/**
+ * Get all server toolboxes from the configuration
+ * @returns {Object} Object with toolbox names as keys and arrays of server names as values
+ */
+export function getToolboxes() {
+  const config = readConfigWithMigration();
+  return config.toolboxes || {};
+}
+
+/**
+ * Add or update a server toolbox
+ * @param {string} name - Toolbox name
+ * @param {string[]} servers - List of server names in the toolbox
  * @returns {boolean} Success status
  */
-export function addGroup(name, servers) {
-  const config = readConfig();
-  
-  // Initialize groups if it doesn't exist
-  if (!config.groups) {
-    config.groups = {};
+export function addToolbox(name, servers) {
+  const config = readConfigWithMigration();
+
+  // Initialize toolboxes if it doesn't exist
+  if (!config.toolboxes) {
+    config.toolboxes = {};
   }
-  
-  // Add/update the group
-  config.groups[name] = servers;
-  
+
+  // Add/update the toolbox
+  config.toolboxes[name] = servers;
+
   return writeConfig(config);
 }
 
 /**
- * Remove a server group
- * @param {string} name - Group name to remove
+ * Remove a server toolbox
+ * @param {string} name - Toolbox name to remove
  * @returns {boolean} Success status
  */
-export function removeGroup(name) {
-  const config = readConfig();
-  
-  if (!config.groups || !config.groups[name]) {
+export function removeToolbox(name) {
+  const config = readConfigWithMigration();
+
+  if (!config.toolboxes || !config.toolboxes[name]) {
     return false;
   }
-  
-  delete config.groups[name];
+
+  delete config.toolboxes[name];
   return writeConfig(config);
 }
 
 /**
- * Expand a server name or group name to list of server names
- * @param {string} name - Server or group name
+ * Expand a server name or toolbox name to list of server names
+ * @param {string} name - Server or toolbox name
  * @returns {string[]} List of server names
  */
-export function expandServerOrGroup(name) {
-  const groups = getGroups();
-  
-  // If it's a group, return its servers
-  if (groups[name]) {
-    return groups[name];
+export function expandServerOrToolbox(name) {
+  const toolboxes = getToolboxes();
+
+  // If it's a toolbox, return its servers
+  if (toolboxes[name]) {
+    return toolboxes[name];
   }
-  
+
   // Otherwise, assume it's a server name
   return [name];
+}
+
+// ============================================================================
+// DEPRECATED: Legacy 'groups' API - use 'toolboxes' instead
+// These functions provide backwards compatibility but will show warnings
+// ============================================================================
+
+let groupsDeprecationWarned = false;
+
+/**
+ * Show deprecation warning for groups API (once per session)
+ */
+function warnGroupsDeprecation() {
+  if (!groupsDeprecationWarned) {
+    console.warn('\x1b[33m[mcpz] Warning: "groups" is deprecated, please use "toolbox" instead\x1b[0m');
+    console.warn('\x1b[33m[mcpz] Run: mcpz toolbox list\x1b[0m');
+    groupsDeprecationWarned = true;
+  }
+}
+
+/**
+ * @deprecated Use getToolboxes() instead
+ */
+export function getGroups() {
+  warnGroupsDeprecation();
+  return getToolboxes();
+}
+
+/**
+ * @deprecated Use addToolbox() instead
+ */
+export function addGroup(name, servers) {
+  warnGroupsDeprecation();
+  return addToolbox(name, servers);
+}
+
+/**
+ * @deprecated Use removeToolbox() instead
+ */
+export function removeGroup(name) {
+  warnGroupsDeprecation();
+  return removeToolbox(name);
+}
+
+/**
+ * @deprecated Use expandServerOrToolbox() instead
+ */
+export function expandServerOrGroup(name) {
+  warnGroupsDeprecation();
+  return expandServerOrToolbox(name);
 }
 
 /**

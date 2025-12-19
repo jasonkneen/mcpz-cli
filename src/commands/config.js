@@ -51,13 +51,13 @@ export function config(options) {
       console.log('  No servers configured');
     }
     
-    console.log(chalk.bold('Groups:'));
-    if (config.groups && Object.keys(config.groups).length > 0) {
-      Object.entries(config.groups).forEach(([name, servers]) => {
+    console.log(chalk.bold('Toolboxes:'));
+    if (config.toolboxes && Object.keys(config.toolboxes).length > 0) {
+      Object.entries(config.toolboxes).forEach(([name, servers]) => {
         console.log(`  ${chalk.green(name)}: ${servers.join(', ')}`);
       });
     } else {
-      console.log('  No groups configured');
+      console.log('  No toolboxes configured');
     }
   }
 }

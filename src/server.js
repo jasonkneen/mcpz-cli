@@ -15,6 +15,7 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ListResourceTemplatesRequestSchema,
+  ReadResourceRequestSchema,
   McpError
 } from '@modelcontextprotocol/sdk/types.js';
 
@@ -734,7 +735,9 @@ class McpServer {
   #mcpClients = new Map();
   #serverFilters = null;
   #toolFilters = null;
-  #groupFilters = null;
+  #toolboxFilters = null;
+  #skillFilters = null;
+  #loadedSkills = [];
   constructor() {
     // Create instances of managers
     this.#toolRegistry = new ToolRegistry();
@@ -756,6 +759,13 @@ class McpServer {
             templates: {
               list: true
             }
+          },
+          // Custom capabilities for skills
+          experimental: {
+            skills: {
+              list: true,
+              read: true
+            }
           }
         },
       }
@@ -771,6 +781,9 @@ class McpServer {
     
     // Set up methods to provide instance status data to the UI
     this.getInstancesStatus = this.#getInstancesStatus.bind(this);
+
+    // Set up getter for loaded skills
+    this.getLoadedSkills = () => this.#loadedSkills;
   }
 
   /**
@@ -816,7 +829,7 @@ class McpServer {
     let filteredServers = servers;
     if (this.#serverFilters) {
       // Filter servers based on server filters
-      // Note: Server filters have already been expanded to include servers from groups in the start method
+      // Note: Server filters have already been expanded to include servers from toolboxes in the start method
       filteredServers = servers.filter(server => this.#serverFilters.includes(server.name));
       
       console.info(`Filtered to ${filteredServers.length} servers out of ${servers.length} total`);
@@ -947,7 +960,7 @@ class McpServer {
             ...server,
             toolFilters: this.#toolFilters || [],
             serverFilters: this.#serverFilters || [],
-            groupFilters: this.#groupFilters || []
+            toolboxFilters: this.#toolboxFilters || []
           };
           
           // Register the instance with the instance manager
@@ -1170,7 +1183,79 @@ class McpServer {
     // Handler for listing resources
     this.#server.setRequestHandler(ListResourcesRequestSchema, async () => {
       console.info('Handling resources list request');
-      return { resources: [] };
+
+      const resources = [];
+
+      // Add skill resources
+      if (this.#loadedSkills && this.#loadedSkills.length > 0) {
+        for (const skill of this.#loadedSkills) {
+          resources.push({
+            uri: `skill://${skill.name}/instructions`,
+            name: skill.name,
+            description: skill.description || `Instructions for ${skill.name} skill`,
+            mimeType: 'text/markdown'
+          });
+        }
+        console.info(`Added ${this.#loadedSkills.length} skill resources`);
+      }
+
+      return { resources };
+    });
+
+    // Handler for reading resources
+    this.#server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      const uri = request.params.uri;
+      console.info(`Handling read resource request for: ${uri}`);
+
+      // Check if this is a skill resource
+      if (uri.startsWith('skill://')) {
+        // Parse the skill URI: skill://<name>/instructions
+        const match = uri.match(/^skill:\/\/([^/]+)\/instructions$/);
+        if (!match) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `Invalid skill URI format: ${uri}. Expected: skill://<name>/instructions`
+          );
+        }
+
+        const skillName = match[1];
+        const skill = this.#loadedSkills.find(s => s.name === skillName);
+
+        if (!skill) {
+          throw new McpError(
+            ErrorCode.InvalidRequest,
+            `Skill not found: ${skillName}`
+          );
+        }
+
+        // Get the full skill instructions
+        const { getSkillInstructions } = await import('./utils/skills.js');
+        const skillsDir = path.join(os.homedir(), '.mcpz', 'skills');
+        const instructions = getSkillInstructions(skillName, skillsDir);
+
+        if (!instructions) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Failed to load instructions for skill: ${skillName}`
+          );
+        }
+
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'text/markdown',
+              text: instructions
+            }
+          ]
+        };
+      }
+
+      // Not a recognized resource
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `Unknown resource URI: ${uri}`
+      );
     });
 
     // Handler for listing resource templates
@@ -1196,34 +1281,63 @@ class McpServer {
 
       // Parse filters
       this.#serverFilters = this.#parseFilters(options.server, options.servers);
-      this.#groupFilters = this.#parseFilters(options.group, options.groups);
       this.#toolFilters = this.#parseFilters(options.tool, options.tools);
-      
-      // If group filters are specified, expand them to server filters
-      if (this.#groupFilters) {
-        console.info(`Filtering to groups: ${this.#groupFilters.join(', ')}`);
-        
-        // Import the expandServerOrGroup function
-        const { expandServerOrGroup } = await import('./utils/config.js');
-        
+
+      // Support both --toolbox/--toolboxes (new) and --group/--groups (deprecated)
+      const toolboxOption = options.toolbox || options.group;
+      const toolboxesOption = options.toolboxes || options.groups;
+      this.#toolboxFilters = this.#parseFilters(toolboxOption, toolboxesOption);
+
+      // Warn if deprecated --group/--groups options are used
+      if (options.group || options.groups) {
+        console.warn('\x1b[33m[mcpz] Warning: --group/--groups is deprecated, please use --toolbox/--toolboxes instead\x1b[0m');
+      }
+
+      // Parse skill filters
+      this.#skillFilters = this.#parseFilters(options.skill, options.skills);
+
+      // If skill filters are specified, load the filtered skills
+      if (this.#skillFilters) {
+        console.info(`Filtering to skills: ${this.#skillFilters.join(', ')}`);
+
+        // Import the skills utility
+        const { listSkills } = await import('./utils/skills.js');
+
+        // Get skills directory
+        const skillsDir = path.join(os.homedir(), '.mcpz', 'skills');
+
+        // Load skills that match the filter
+        const allSkills = listSkills(skillsDir);
+        this.#loadedSkills = allSkills.filter(skill => this.#skillFilters.includes(skill.name));
+
+        console.info(`Loaded ${this.#loadedSkills.length} skills out of ${allSkills.length} available`);
+      }
+
+      // If toolbox filters are specified, expand them to server filters
+      if (this.#toolboxFilters) {
+        console.info(`Filtering to toolboxes: ${this.#toolboxFilters.join(', ')}`);
+
+        // Import the expandServerOrToolbox function
+        const { expandServerOrToolbox } = await import('./utils/config.js');
+
         // Create a set to hold all server names after expansion
         const expandedServerNames = new Set();
-        
-        // Expand each group filter to server names
-        for (const filter of this.#groupFilters) {
+
+        // Expand each toolbox filter to server names
+        for (const filter of this.#toolboxFilters) {
           try {
-            const expanded = expandServerOrGroup(filter);
+            const expanded = expandServerOrToolbox(filter);
             expanded.forEach(name => expandedServerNames.add(name));
           } catch (error) {
-            console.error(`Error expanding group '${filter}': ${error.message}`);
+            console.error(`Error expanding toolbox '${filter}': ${error.message}`);
           }
         }
-        
-        // If we have server filters already, combine them with the expanded group filters
+
+        // If we have server filters already, combine them with the expanded toolbox filters
         if (this.#serverFilters) {
           this.#serverFilters.forEach(server => expandedServerNames.add(server));
         }
-        
+
         // Update server filters with the combined list
         this.#serverFilters = expandedServerNames.size > 0 ? Array.from(expandedServerNames) : null;
       }
@@ -1232,9 +1346,13 @@ class McpServer {
       if (this.#serverFilters) {
         console.info(`Filtering to servers: ${this.#serverFilters.join(', ')}`);
       }
-      
+
       if (this.#toolFilters) {
         console.info(`Filtering to tools: ${this.#toolFilters.join(', ')}`);
+      }
+
+      if (this.#skillFilters) {
+        console.info(`Filtering to skills: ${this.#skillFilters.join(', ')}`);
       }
 
       // Clear the tool registry
@@ -1377,7 +1495,8 @@ const exportedServer = {
   stop: () => mcpServer.stop(),
   registerClient: (clientId, client) => mcpServer.registerClient(clientId, client),
   unregisterClient: (clientId) => mcpServer.unregisterClient(clientId),
-  getInstancesStatus: () => mcpServer.getInstancesStatus()
+  getInstancesStatus: () => mcpServer.getInstancesStatus(),
+  getLoadedSkills: () => mcpServer.getLoadedSkills()
 };
 
 // Start the server if this script is run directly

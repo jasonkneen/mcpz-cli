@@ -108,7 +108,7 @@ class InstanceManager {
         filters: {
           tools: parsedConfig.toolFilters || [],
           servers: parsedConfig.serverFilters || [],
-          groups: parsedConfig.groupFilters || []
+          toolboxes: parsedConfig.toolboxFilters || []
         },
         command: parsedConfig.command || serverPath,
         args: parsedConfig.args || (contextInfo && contextInfo.args ? contextInfo.args : [])
