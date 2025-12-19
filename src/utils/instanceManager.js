@@ -383,24 +383,38 @@ class InstanceManager {
   cleanupStaleInstances() {
     const now = Date.now();
     const oneHourMs = 60 * 60 * 1000;
-    
+    const instancesToRemove = [];
+
     for (const instance of this.#instances.values()) {
+      // Remove instances with error or stopped status (they're not running anyway)
+      if (instance.status === 'error' || instance.status === 'stopped') {
+        instancesToRemove.push(instance.id);
+        continue;
+      }
+
       if (instance.status === 'running') {
         // For instances without a PID, consider them stale after an hour of inactivity
         if (!instance.pid) {
           if (now - instance.lastHealthCheck > oneHourMs) {
-            console.warn(`Removing stale instance ${instance.id} (no PID) after inactivity`);
-            this.removeInstance(instance.id);
+            instancesToRemove.push(instance.id);
           }
         } else {
           // For instances with PIDs, check if the process is still running
           const isRunning = this.#isPidRunning(instance.pid);
           if (!isRunning) {
-            console.warn(`Removing stale instance ${instance.id} (PID: ${instance.pid})`);
-            this.removeInstance(instance.id);
+            instancesToRemove.push(instance.id);
           }
         }
       }
+    }
+
+    // Remove all stale instances
+    for (const id of instancesToRemove) {
+      this.removeInstance(id);
+    }
+
+    if (instancesToRemove.length > 0 && isLogging()) {
+      console.info(`Cleaned up ${instancesToRemove.length} stale instance(s)`);
     }
   }
 

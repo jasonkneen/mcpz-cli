@@ -208,8 +208,9 @@ function InteractiveApp() {
     setServers(config.servers || []);
     setGroups(getGroups());
 
-    // Load instances
+    // Load instances and clean up stale ones
     const instanceManager = InstanceManager.getInstance();
+    instanceManager.cleanupStaleInstances();
     setInstances(instanceManager.getAllInstances());
 
     // Listen for instance changes
@@ -269,6 +270,16 @@ function InteractiveApp() {
     setOutput(prev => [...prev.slice(-50), line]);
   }, []);
 
+  // Filter out banner lines from output
+  const filterBanner = useCallback((text) => {
+    if (!text) return text;
+    // Banner contains block characters like █░▒▓
+    const bannerPattern = /^[█░▒▓▒ ]+$/;
+    return text.split('\n')
+      .filter(line => !bannerPattern.test(line.trim()) && line.trim() !== '')
+      .join('\n');
+  }, []);
+
   // Run CLI command
   const runCliCommand = useCallback((command) => {
     return new Promise((resolve, reject) => {
@@ -289,14 +300,15 @@ function InteractiveApp() {
       });
 
       child.on('close', (code) => {
-        resolve({ stdout, stderr, code });
+        // Filter banner from output
+        resolve({ stdout: filterBanner(stdout), stderr: filterBanner(stderr), code });
       });
 
       child.on('error', (error) => {
         reject(error);
       });
     });
-  }, []);
+  }, [filterBanner]);
 
   // Execute command
   const executeCommand = useCallback(async (command) => {
@@ -309,6 +321,12 @@ function InteractiveApp() {
       const parts = trimmed.slice(1).split(' ');
       const cmd = parts[0].toLowerCase();
       const args = parts.slice(1);
+
+      // Handle empty slash command
+      if (!cmd) {
+        addOutput({ type: 'error', content: 'Please enter a command after /. Type /help for available commands.' });
+        return;
+      }
 
       switch (cmd) {
       case 'help':
