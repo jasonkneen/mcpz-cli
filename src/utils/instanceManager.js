@@ -59,7 +59,8 @@ class InstanceManager {
   #saveInstance(instance) {
     try {
       const filePath = path.join(this.#instancesDir, `${instance.id}.json`);
-      fs.writeFileSync(filePath, JSON.stringify(instance, null, 2));
+      // Security: Write with restrictive permissions (owner read/write only)
+      fs.writeFileSync(filePath, JSON.stringify(instance, null, 2), { mode: 0o600 });
     } catch (error) {
       console.info(`Failed to save instance: ${instance.id}`, error);
     }
@@ -234,63 +235,105 @@ class InstanceManager {
   }
 
   /**
-   * Fetches resource usage for a process
+   * Security: Validates that a PID is a positive integer
+   * @param {*} pid - Value to validate
+   * @returns {boolean} - Whether the PID is valid
+   */
+  #isValidPid(pid) {
+    return Number.isInteger(pid) && pid > 0;
+  }
+
+  /**
+   * Fetches resource usage for multiple processes in a single call (batched)
+   * @param {number[]} pids - Array of Process IDs to check
+   * @returns {Promise<Map<number, Object>>} - Map of PID to resource usage information
+   */
+  async #getBatchedResourceUsage(pids) {
+    const results = new Map();
+    if (!pids || pids.length === 0) return results;
+
+    // Security: Validate all PIDs are positive integers
+    const validPids = pids.filter(pid => this.#isValidPid(pid));
+    if (validPids.length === 0) return results;
+
+    try {
+      // Use execFile instead of exec for security (no shell)
+      const { promisify } = await import('util');
+      const { execFile } = await import('child_process');
+      const execFilePromise = promisify(execFile);
+
+      // Batch all PIDs into a single ps command
+      const { stdout } = await execFilePromise('ps', [
+        '-o', 'pid,pcpu,pmem,rss,vsz,time',
+        '-p', validPids.join(',')
+      ], { timeout: 5000 });
+
+      const lines = stdout.trim().split('\n');
+      if (lines.length >= 2) {
+        const headers = lines[0].trim().split(/\s+/);
+
+        // Process each line (skip header)
+        for (let i = 1; i < lines.length; i++) {
+          const values = lines[i].trim().split(/\s+/);
+          const result = {};
+
+          for (let j = 0; j < headers.length; j++) {
+            result[headers[j].toLowerCase()] = values[j];
+          }
+
+          const pid = parseInt(result.pid);
+          if (this.#isValidPid(pid)) {
+            // Convert RSS from KB to MB for readability
+            if (result.rss) {
+              result.memory = (parseInt(result.rss) / 1024).toFixed(1) + ' MB';
+            }
+            // Add CPU percentage
+            if (result.pcpu) {
+              result.cpu = result.pcpu + '%';
+            }
+            // Add uptime in a readable format
+            if (result.time) {
+              result.uptime = result.time;
+            }
+            results.set(pid, result);
+          }
+        }
+      }
+    } catch (error) {
+      // Silently fail - resource usage is non-critical
+      if (isLogging()) {
+        console.debug('Error getting batched resource usage:', error.message);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Fetches resource usage for a process (for backwards compatibility)
    * @param {number} pid - Process ID to check
    * @returns {Promise<Object|null>} - Resource usage information or null if unavailable
    */
   async #getProcessResourceUsage(pid) {
-    if (!pid) return null;
-    
-    try {
-      // Use `ps` command to get memory and CPU usage on Unix-like systems
-      const { promisify } = await import('util');
-      const exec = promisify((await import('child_process')).exec);
-      
-      const { stdout } = await exec(`ps -o pid,pcpu,pmem,rss,vsz,time -p ${pid}`);
-      const lines = stdout.trim().split('\n');
-      
-      if (lines.length >= 2) {
-        const headers = lines[0].trim().split(/\s+/);
-        const values = lines[1].trim().split(/\s+/);
-        
-        const result = {};
-        for (let i = 0; i < headers.length; i++) {
-          result[headers[i].toLowerCase()] = values[i];
-        }
-        
-        // Convert RSS from KB to MB for readability
-        if (result.rss) {
-          result.memory = (parseInt(result.rss) / 1024).toFixed(1) + ' MB';
-        }
-        
-        // Add CPU percentage
-        if (result.pcpu) {
-          result.cpu = result.pcpu + '%';
-        }
-        
-        // Add uptime in a readable format
-        if (result.time) {
-          result.uptime = result.time;
-        }
-        
-        return result;
-      }
-    } catch (error) {
-      // Silently fail - resource usage is non-critical
-      console.debug(`Error getting resource usage for PID ${pid}:`, error);
-    }
-    
-    return null;
+    if (!pid || !this.#isValidPid(pid)) return null;
+
+    const results = await this.#getBatchedResourceUsage([pid]);
+    return results.get(pid) || null;
   }
 
   /**
    * Performs health checks on all instances
+   * Performance optimized: batches resource queries into single subprocess call
    */
   #performHealthCheck() {
+    const runningInstances = [];
+    const pidsToQuery = [];
+
+    // First pass: check process status and collect PIDs for resource query
     for (const instance of this.#instances.values()) {
       // Check if the process is still running
       const isRunning = instance.pid ? this.#isPidRunning(instance.pid) : false;
-      
+
       if (!isRunning && instance.status === 'running') {
         if (instance.pid) {
           console.warn(`Instance ${instance.id} (PID: ${instance.pid}) is no longer running`);
@@ -300,24 +343,37 @@ class InstanceManager {
         this.updateInstanceStatus(instance.id, 'error');
       } else if (instance.status === 'running') {
         instance.lastHealthCheck = Date.now();
-        
-        // Update resource usage information for running processes with PIDs
-        if (instance.pid) {
-          this.#getProcessResourceUsage(instance.pid).then(resourceUsage => {
-            if (resourceUsage) {
-              instance.resourceUsage = resourceUsage;
-              this.#saveInstance(instance);
-              // Notify listeners of the update
-              this.#eventEmitter.emit('instance_updated', instance);
-              this.#eventEmitter.emit('instances_changed', this.getAllInstances());
-            }
-          }).catch(error => {
-            console.debug(`Failed to get resource usage for instance ${instance.id}:`, error);
-          });
+        runningInstances.push(instance);
+
+        // Collect valid PIDs for batched resource query
+        if (instance.pid && this.#isValidPid(instance.pid)) {
+          pidsToQuery.push(instance.pid);
         }
-        
-        this.#saveInstance(instance);
       }
+    }
+
+    // Performance: Defer resource collection to background with batched query
+    if (pidsToQuery.length > 0) {
+      setImmediate(() => {
+        this.#getBatchedResourceUsage(pidsToQuery).then(resourceMap => {
+          let hasUpdates = false;
+
+          for (const instance of runningInstances) {
+            if (instance.pid && resourceMap.has(instance.pid)) {
+              instance.resourceUsage = resourceMap.get(instance.pid);
+              this.#saveInstance(instance);
+              hasUpdates = true;
+            }
+          }
+
+          // Emit single event for all updates instead of per-instance
+          if (hasUpdates) {
+            this.#eventEmitter.emit('instances_changed', this.getAllInstances());
+          }
+        }).catch(() => {
+          // Silently ignore - resource usage is non-critical
+        });
+      });
     }
   }
 
@@ -383,24 +439,38 @@ class InstanceManager {
   cleanupStaleInstances() {
     const now = Date.now();
     const oneHourMs = 60 * 60 * 1000;
-    
+    const instancesToRemove = [];
+
     for (const instance of this.#instances.values()) {
+      // Remove instances with error or stopped status (they're not running anyway)
+      if (instance.status === 'error' || instance.status === 'stopped') {
+        instancesToRemove.push(instance.id);
+        continue;
+      }
+
       if (instance.status === 'running') {
         // For instances without a PID, consider them stale after an hour of inactivity
         if (!instance.pid) {
           if (now - instance.lastHealthCheck > oneHourMs) {
-            console.warn(`Removing stale instance ${instance.id} (no PID) after inactivity`);
-            this.removeInstance(instance.id);
+            instancesToRemove.push(instance.id);
           }
         } else {
           // For instances with PIDs, check if the process is still running
           const isRunning = this.#isPidRunning(instance.pid);
           if (!isRunning) {
-            console.warn(`Removing stale instance ${instance.id} (PID: ${instance.pid})`);
-            this.removeInstance(instance.id);
+            instancesToRemove.push(instance.id);
           }
         }
       }
+    }
+
+    // Remove all stale instances
+    for (const id of instancesToRemove) {
+      this.removeInstance(id);
+    }
+
+    if (instancesToRemove.length > 0 && isLogging()) {
+      console.info(`Cleaned up ${instancesToRemove.length} stale instance(s)`);
     }
   }
 

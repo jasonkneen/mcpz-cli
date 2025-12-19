@@ -1,6 +1,6 @@
 {
   "name": "@mcpz/cli",
-  "version": "1.0.32",
+  "version": "1.0.33",
   "description": "Command line interface for Model Context Protocol servers and tools",
   "type": "module",
   "main": "dist/index.js",
@@ -15,9 +15,10 @@
   ],
   "scripts": {
     "build": "node src/build.js",
-    "test": "node --test --test-reporter=spec --test-reporter-destination=dist/test-results.json",
-    "test:single": "node --test",
-    "test:watch": "node --test --watch",
+    "test": "node --test --test-reporter=spec --test-reporter-destination=dist/test-results.json test/*.test.js",
+    "test:single": "node --test test/*.test.js",
+    "test:watch": "node --test --watch test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
     "lint": "eslint src/",
     "deploy": "npm run build && cd dist && npm publish --access=public",
     "deploy-dev": "npm run build && cd dist && npm publish --tag dev --access=public",
@@ -42,24 +43,25 @@
   ],
   "author": "Jason kneen",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.5.0",
-    "boxen": "^7.1.1",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "boxen": "^8.0.1",
     "chalk": "^5.4.1",
-    "commander": "^11.0.0",
-    "ink": "^4.4.1",
-    "ink-link": "^3.0.0",
+    "commander": "^13.0.0",
+    "fuse.js": "^7.0.0",
+    "ink": "^5.1.0",
+    "ink-link": "^4.1.0",
     "ink-spinner": "^5.0.0",
-    "ink-text-input": "^5.0.1",
+    "ink-text-input": "^6.0.0",
     "log-update": "^6.1.0",
     "react": "^18.3.1",
     "term-size": "^3.0.2",
-    "uuid": "^9.0.1"
+    "uuid": "^11.0.3"
   },
   "devDependencies": {
-    "eslint": "^8.57.0",
-    "husky": "^8.0.0",
+    "eslint": "^9.16.0",
+    "globals": "^16.5.0",
+    "husky": "^9.1.7",
     "javascript-obfuscator": "^4.1.1",
-    "lint-staged": "^15.5.0",
-    "mocha": "^10.3.0"
+    "lint-staged": "^15.2.10"
   }
 }

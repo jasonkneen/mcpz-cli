@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+
 // Default config paths - using an object to allow properties to be changed for tests
 const CONFIG = {
   DIR: path.join(os.homedir(), '.mcpz'),
@@ -8,6 +9,39 @@ const CONFIG = {
   CUSTOM_LOAD_PATH: null,
   CUSTOM_SAVE_PATH: null
 };
+
+/**
+ * Security: Check if file has insecure permissions
+ * @param {string} filePath - Path to check
+ * @returns {{secure: boolean, reason?: string}}
+ */
+function checkFilePermissions(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return { secure: true }; // File doesn't exist yet, will be created securely
+    }
+
+    const stats = fs.statSync(filePath);
+
+    // Check if file is world-writable (mode & 0o002)
+    // On Unix: 0o002 is world-write bit
+    if (process.platform !== 'win32') {
+      if (stats.mode & 0o002) {
+        return { secure: false, reason: 'Config file is world-writable' };
+      }
+      // Check if file is group-writable (mode & 0o020)
+      if (stats.mode & 0o020) {
+        return { secure: false, reason: 'Config file is group-writable' };
+      }
+    }
+
+    return { secure: true };
+  } catch (error) {
+    // If we can't check permissions, assume it's okay but log warning
+    console.warn(`Warning: Could not check permissions for ${filePath}`);
+    return { secure: true };
+  }
+}
 
 /**
  * Ensure config directory exists
@@ -55,16 +89,24 @@ export function setCustomSavePath(savePath) {
  */
 export function readConfig() {
   const configPath = CONFIG.CUSTOM_LOAD_PATH || CONFIG.PATH;
-  
+
   // Ensure directory exists (only for default path)
   if (!CONFIG.CUSTOM_LOAD_PATH) {
     ensureConfigDir();
   }
-  
+
   if (!fs.existsSync(configPath)) {
     return { servers: [] };
   }
-  
+
+  // Security: Check file permissions before reading
+  const permCheck = checkFilePermissions(configPath);
+  if (!permCheck.secure) {
+    console.error(`Security warning: ${permCheck.reason}`);
+    console.error('Please fix permissions with: chmod 600 ' + configPath);
+    // Still read but warn - don't block CLI usage
+  }
+
   try {
     return JSON.parse(fs.readFileSync(configPath, 'utf8'));
   } catch (error) {
@@ -89,7 +131,8 @@ export function writeConfig(config) {
   }
   
   try {
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    // Security: Write with restrictive permissions (owner read/write only)
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
     return true;
   } catch (error) {
     console.error(`Error writing config to ${configPath}: ${error.message}`);

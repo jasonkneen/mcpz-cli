@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { program } from 'commander';
+import { program, Command } from 'commander';
 import chalk from 'chalk';
 import fs from 'fs';
 import path from 'path';
@@ -122,7 +122,7 @@ program
   .command('groups')
   .description('Manage MCP server and tool groups')
   .addCommand(
-    new program.Command('add')
+    new Command('add')
       .description('Create a new server group')
       .argument('<n>', 'Name of the group')
       .option('-s, --servers <servers>', 'Comma-separated list of server names to include in the group')
@@ -135,7 +135,7 @@ program
       })
   )
   .addCommand(
-    new program.Command('remove')
+    new Command('remove')
       .description('Remove a server group')
       .argument('<n>', 'Name of the group to remove')
       .action((name) => {
@@ -147,7 +147,7 @@ program
       })
   )
   .addCommand(
-    new program.Command('list')
+    new Command('list')
       .description('List all server groups')
       .action(() => {
         import('./commands/groups.js').then(({ listGroups }) => {
