@@ -1,12 +1,21 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { createRequire } from 'module';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
 
-const execPromise = promisify(exec);
+const execFilePromise = promisify(execFile);
 const require = createRequire(import.meta.url);
+
+// Security: Validate package name to prevent command injection
+function validatePackageName(name) {
+  // npm package names: lowercase, can contain dots, hyphens, underscores, @scope
+  const validPattern = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
+  if (!name || typeof name !== 'string') return false;
+  if (name.length > 214) return false;
+  return validPattern.test(name);
+}
 
 // Get the current directory of this file
 const __filename = fileURLToPath(import.meta.url);
@@ -44,7 +53,16 @@ try {
  */
 export async function checkForUpdates() {
   try {
-    const { stdout } = await execPromise(`npm view ${packageJson.name} version`);
+    // Security: Validate package name before use
+    if (!validatePackageName(packageJson.name)) {
+      throw new Error('Invalid package name');
+    }
+
+    // Security: Use execFile with explicit arguments (no shell) and timeout
+    const { stdout } = await execFilePromise('npm', ['view', packageJson.name, 'version'], {
+      timeout: 2000, // 2 second timeout
+      maxBuffer: 1024 * 10 // 10KB max
+    });
     const latestVersion = stdout.trim();
     const currentVersion = packageJson.version;
     
@@ -73,8 +91,17 @@ export async function checkForUpdates() {
  */
 export async function updatePackage() {
   try {
+    // Security: Validate package name before use
+    if (!validatePackageName(packageJson.name)) {
+      throw new Error('Invalid package name');
+    }
+
     console.log('Updating to the latest version...');
-    const { stdout, stderr } = await execPromise(`npm install -g ${packageJson.name}@latest`);
+    // Security: Use execFile with explicit arguments (no shell) and timeout
+    const { stdout, stderr } = await execFilePromise('npm', ['install', '-g', `${packageJson.name}@latest`], {
+      timeout: 60000, // 60 second timeout for install
+      maxBuffer: 1024 * 1024 // 1MB max for install output
+    });
     
     if (stderr && !stderr.includes('npm WARN')) {
       throw new Error(stderr);

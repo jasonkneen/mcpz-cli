@@ -72,7 +72,7 @@ const instanceManager = InstanceManager.getInstance();
 class SettingsManager {
   #settingsCache = null;
   #cacheTimestamp = 0;
-  #cacheTTL = 0; // 5 seconds cache TTL
+  #cacheTTL = 5000; // 5 seconds cache TTL (was incorrectly set to 0)
 
   /**
  * Get the server name for a tool

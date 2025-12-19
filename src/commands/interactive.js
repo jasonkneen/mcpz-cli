@@ -19,6 +19,59 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const binPath = path.resolve(__dirname, '../../dist/index.js');
 
+// Security: Parse command string into arguments properly (handles quotes)
+function parseCommandArgs(input) {
+  const args = [];
+  let current = '';
+  let inQuote = false;
+  let quoteChar = '';
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    if ((char === '"' || char === "'") && !inQuote) {
+      inQuote = true;
+      quoteChar = char;
+    } else if (char === quoteChar && inQuote) {
+      inQuote = false;
+      quoteChar = '';
+    } else if (char === ' ' && !inQuote) {
+      if (current) {
+        args.push(current);
+        current = '';
+      }
+    } else {
+      current += char;
+    }
+  }
+
+  if (current) {
+    args.push(current);
+  }
+
+  return args;
+}
+
+// Security: Validate input doesn't contain dangerous patterns
+function validateCommandInput(input) {
+  // Block shell metacharacters that could be dangerous
+  const dangerousPatterns = [
+    /[;&|`$]/,           // Shell operators
+    /\$\(/,              // Command substitution
+    /`/,                 // Backticks
+    />\s*\//,            // Redirect to absolute path
+    /<\s*\//,            // Read from absolute path
+  ];
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(input)) {
+      return { valid: false, reason: 'Dangerous characters detected' };
+    }
+  }
+
+  return { valid: true };
+}
+
 // History file
 const homedir = process.env.HOME || process.env.USERPROFILE || os.homedir();
 const historyFile = path.join(homedir, '.mcpz_history');
@@ -283,7 +336,15 @@ function InteractiveApp() {
   // Run CLI command
   const runCliCommand = useCallback((command) => {
     return new Promise((resolve, reject) => {
-      const args = command.split(' ');
+      // Security: Validate input before processing
+      const validation = validateCommandInput(command);
+      if (!validation.valid) {
+        reject(new Error(validation.reason));
+        return;
+      }
+
+      // Security: Use proper argument parsing instead of naive split
+      const args = parseCommandArgs(command);
       const child = spawn('node', [binPath, ...args], {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
